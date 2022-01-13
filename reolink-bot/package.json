@@ -1,0 +1,30 @@
+{
+  "name": "reolink-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord-Bot wit object detection for Reolink CCTV cameras",
+  "main": "index.js",
+  "author": "Andreas Bichinger",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abichinger/reolink-discord-bot"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@tensorflow-models/coco-ssd": "^2.0.3",
+    "@tensorflow/tfjs-core": "^2.0.0",
+    "@tensorflow/tfjs-node": "^2.0.0",
+    "canvas": "^2.6.1",
+    "discord.js": "^12.2.0",
+    "dotenv": "^8.2.0",
+    "jpeg-js": "^0.4.0",
+    "reolink-cgi": "1.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^7.2.0",
+    "eslint-config-google": "^0.14.0"
+  }
+}

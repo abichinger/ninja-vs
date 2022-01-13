@@ -1,0 +1,20 @@
+{
+  "name": "reolink-cgi",
+  "version": "1.0.0",
+  "description": "Reolink CGI wrapper",
+  "main": "index.js",
+  "author": "Andreas Bichinger",
+  "license": "MIT",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abichinger/reolink-discord-bot"
+  },
+  "dependencies": {
+    "axios": "^0.19.2"
+  },
+  "devDependencies": {
+    "eslint": "^7.2.0",
+    "eslint-config-google": "^0.14.0"
+  }
+}

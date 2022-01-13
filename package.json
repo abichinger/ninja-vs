@@ -1,0 +1,7 @@
+{
+    "private": true,
+    "workspaces": ["reolink-bot", "reolink-cgi"],
+    "scripts": {
+        "start": "cd reolink-bot && yarn start"
+    }
+}
