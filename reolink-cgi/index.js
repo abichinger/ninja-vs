@@ -20,7 +20,9 @@ class Client extends EventEmitter{
     constructor(host) {
         super()
         this.host = host
-        this.base_url = host + '/cgi-bin/api.cgi?'
+        this.base_url = "http://" + host + '/cgi-bin/api.cgi?'
+        this.user = null
+        this.password = null
     }
 
     async validateToken() {
@@ -42,18 +44,22 @@ class Client extends EventEmitter{
      * @param {string} password 
      */
     async login(username, password) {
+
+        this.username = username || this.username
+        this.password = password || this.password
+
         let res = await axios.post(`${this.base_url}cmd=Login&token=null`, [{
             "cmd":"Login",
             "action":0,
             "param":{
                 "User":{
-                    "userName":username,
-                    "password":password
+                    "userName":this.username,
+                    "password":this.password
                 }
             }
         }])
         if(res.status == 200){
-            let renewal = partial.bind(this)(this.login, username, password)
+            let renewal = partial.bind(this)(this.login, this.username, this.password)
             let data = res.data[0].value.Token
             this.token = new Token(data.name, data.leaseTime, renewal)
 
@@ -66,6 +72,14 @@ class Client extends EventEmitter{
 
     snapUrl(){
         return `${this.base_url}cmd=Snap&channel=0&rs=wuuPhkmUCeI9WG7C&token=${this.token.value}`
+    }
+
+    rtspMain(){
+        return `rtsp://${this.username}:${this.password}@${this.host}:554/h264Preview_01_main`
+    }
+
+    rtspSub(){
+        return `rtsp://${this.username}:${this.password}@${this.host}:554/h264Preview_01_sub`
     }
 
     async snap() {
