@@ -4,13 +4,9 @@ const {Client, MessageAttachment} = require('discord.js')
 const reocgi = require('reolink-cgi')
 const tf = require('@tensorflow/tfjs-node')
 const cocoSsd = require('@tensorflow-models/coco-ssd');
-//const execa = require("execa")
 const EventEmitter = require('events');
 const cv = require("opencv4nodejs-prebuilt")
-
-const util = require('util');
-const exec = util.promisify(require('child_process').exec);
-//const ffmpeg = require('fluent-ffmpeg')
+const ffmpeg = require('fluent-ffmpeg')
 
 const tmpDir = './.tmp';
 
@@ -51,27 +47,6 @@ class ReolinkBot extends EventEmitter {
 
   /**
    * 
-   * @param {cv.Mat} img 
-   * @returns 
-   */
-  async getImageData(img) {
-    //https://github.com/justadudewhohacks/opencv4nodejs/blob/master/README.md#drawing-a-mat-into-html-canvas
-    
-    // convert your image to rgba color space
-    const matRGBA = img.channels === 1
-      ? img.cvtColor(cv.COLOR_GRAY2RGBA)
-      : img.cvtColor(cv.COLOR_BGR2RGBA);
-
-    // create new ImageData from raw mat data
-    return {
-      data: new Uint32Array(matRGBA.getData()),
-      width: img.cols,
-      height: img.rows
-    }
-  }
-
-  /**
-   * 
    * @param {Message} msg 
    * @param {boolean} silent 
    */
@@ -82,8 +57,6 @@ class ReolinkBot extends EventEmitter {
 
     let buffer = await this.client.snap()
     let img = await cv.imdecode(buffer)
-    //let imgData = await this.getImageData(img)
-
     let tensor = tf.tensor(img.getData(), [img.rows, img.cols, img.channels])
 
     let predictions = await this.model.detect(tensor)
@@ -114,20 +87,65 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  async captureFrames(frames, fps, dst=`${tmpDir}/motion%d.jpg`) {
-    let rtsp = this.client.rtspMain()
-    await exec(`ffmpeg -y -i ${rtsp} -frames:v ${frames} -vf fps=${fps} ${dst}`)
+  captureFrames(input, frames, fps, size=[1920, 1080], cb) {
+    return new Promise((resolve, reject) => {
+      let frameSize = size[0]*size[1]*3
+      let frame = new Uint8Array(frameSize)
+      let curSize = 0
+      let i = 0
+
+      let command  = ffmpeg(input)
+      .addOutputOption(`-frames:v ${frames}`)
+      .addOutputOption(`-vf fps=${fps}`)
+      .addOutputOption(`-s ${size[0]}x${size[1]}`)
+      .addOutputOption(`-f image2pipe`)
+      .addOutputOption(`-vcodec rawvideo`)
+      .addOutputOption(`-pix_fmt rgb24`)
+      .on('error', function(err) {
+        console.log('An error occurred: ' + err.message);
+      })
+      .on('start', (cmdline) => console.log(cmdline))
+
+      let ffstream = command.pipe();
+      ffstream.on('error', (err) => {
+        reject(err)
+      })
+
+      ffstream.on('data', (chunk) => {
+        if (curSize + chunk.length >= frame.length) {
+          try {
+            frame.set(chunk, curSize)
+          }
+          finally {
+            cb(frame, i++)
+            curSize = 0
+          }
+        }
+        else {
+          frame.set(chunk, curSize)
+          curSize += chunk.length
+        }
+      })
+
+      ffstream.on('close', () => {
+        resolve()
+      })
+
+    })    
   }
 
-  async motionDetect(minArea=0.03, width=1000, blur=11, thresh=20){
+  async motionDetect(minArea=0.001, width=1000, blur=11, thresh=20, delay=100){
     //inspired by https://www.pyimagesearch.com/2015/05/25/basic-motion-detection-and-tracking-with-python-and-opencv/
 
-    await this.captureFrames(2, 2)
+    let images = [] 
+    let fps = parseInt(1000/delay)
+    let rtsp = this.client.rtspMain()
+
+    await this.captureFrames(rtsp, 2, fps, [1920, 1080], (frame) => {
+      images.push(new cv.Mat(Buffer.from(frame), 1080, 1920, cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
+    })
 
     let scale = 1;
-    let filePaths = [`${tmpDir}/motion1.jpg`, `${tmpDir}/motion2.jpg`]
-    let images = filePaths
-      .map(path => cv.imread(path))
       
     let processed = images.map((img) => {
         scale = width/img.cols
@@ -137,7 +155,7 @@ class ReolinkBot extends EventEmitter {
       .map(img => img.cvtColor(cv.COLOR_BGR2GRAY))
       .map(img => img.gaussianBlur(new cv.Size(blur, blur), 0))
 
-    let kernel = new cv.Mat(3, 3, cv.CV_8UC1, 255)
+    let kernel = new cv.Mat(7, 7, cv.CV_8UC1, 255)
 
     let delta = processed[0].absdiff(processed[1])
       .threshold(thresh, 255, cv.THRESH_BINARY)
