@@ -10,6 +10,7 @@ const ffmpeg = require('fluent-ffmpeg')
 const { VideoCapture } = require('./util')
 const tmpDir = './.tmp';
 const { CommandHandler, ArgType } = require('./cmd')
+const crypto = require("crypto");
 
 /*
 Commands:
@@ -29,7 +30,7 @@ class ReolinkBot extends EventEmitter {
     super()
     this.client = client
     this.discord = new Client()
-    this.intervals = []
+    this.intervals = new Map()
   }
 
   initDiscord() {
@@ -158,7 +159,7 @@ class ReolinkBot extends EventEmitter {
       images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
     })
 
-    let motion = await this.motion(images, true, minArea, thresh, delay, blur, width)
+    let motion = await this.motion(images, true, minArea, thresh, blur, width)
 
     if (motion) {
       return {
@@ -198,38 +199,88 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  async setInterval(cmd, channel, interval, filter){
+  async setInterval(cmd, channel, interval, cooldown=0, filter=false){
     
-    let msg = {
-      content: cmd,
-      channel: {
-        send: async (message, attachment) => {
-          if(filter && !attachment){
+    ((cmd, channel, interval, cooldown, filter) => {
+
+      let start = null
+      let id = crypto.randomBytes(16).toString('base64')
+      let intervalObj = {cmd, channel, interval, cooldown, timeoutId: null}
+      let lastAttachment = null
+
+      let fn = () => {
+        start = new Date().getTime()
+        this.emit('message', msg)
+      }
+
+      let msg = {
+        content: cmd,
+        channel: {
+          send: async (message, attachment) => {
+
+            //save timestamp of last attachment
+            if(attachment){
+              lastAttachment = new Date().getTime()
+            }
+
+            //filter messages without attachment
+            if(filter && !attachment){
+              return
+            }
+
+            //send message
+            let ch = this.discord.channels.cache.get(channel) || (await this.discord.channels.fetch(channel))
+            return ch.send(message, attachment)
+          }
+        },
+        setTimeout: () => {
+          if(!this.intervals.has(id)){
             return
           }
-          let ch = await this.discord.channels.fetch(channel)
-          return ch.send(message, attachment)
+
+          let end = new Date().getTime()
+          let execTime = end - start
+          let cd = cooldown*1000 - (end - (lastAttachment ? lastAttachment : 0))
+          let timeout = interval*1000 + (cd > 0 ? cd : 0) - execTime
+
+          if(timeout < 0){
+            console.log('can\'t keep up')
+            timeout = 0
+          }
+
+          intervalObj.timeoutId = setTimeout(fn, parseInt(timeout))
         }
       }
-    }
+  
+      intervalObj.timeoutId = setTimeout(fn, 0)
+      this.intervals.set(id, intervalObj)
 
-    let id = setInterval(() => {
-      this.emit('message', msg)
-    }, interval*1000)
-
-    this.intervals.push({cmd, channel, interval, id})
+    })(cmd, channel, interval, cooldown, filter)
   }
 
   async clearInterval(index){
-    let interval = this.intervals.splice(index, 1)[0]
-    if(interval){
-      clearInterval(interval.id)
+    let id = Array.from(this.intervals.keys())[index]
+    if(id && this.intervals.has(id)){
+      let timeoutId = this.intervals.get(id).timeoutId
+      if(timeoutId) {
+        clearTimeout(timeoutId)
+      }
+      this.intervals.delete(id)
     }
   }
 
   async listIntervals(){
     return {
-      msg: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.cmd}, ${int.channel}, ${int.interval}s`).join('\n') : 'no intervals'
+      msg: (this.intervals.size > 0) ? Array.from(this.intervals.values()).map((int, i) => `${i}: ${int.cmd}, ${int.channel}, ${int.interval}s`).join('\n') : 'no intervals'
+    }
+  }
+
+  async send(msg, response, attachment) {
+    if(response !== null || attachment !== null){
+      await msg.channel.send(response, attachment)
+    }
+    if(msg.setTimeout){
+      msg.setTimeout()
     }
   }
 
@@ -278,6 +329,7 @@ function main(){
     .addArgument('cmd', ArgType.String, {required: true})
     .addArgument('channel', ArgType.String, {required: true})
     .addArgument('interval', ArgType.Time, {required: true})
+    .addArgument('cooldown', ArgType.Time, {default: 10})
     .addArgument('filter', ArgType.Bool, {default: false})
     //.addArgument('cooldown', ArgType.Time, {default: 5})
 
@@ -290,26 +342,30 @@ function main(){
       description: 'list intervals'
     })
 
+    cmd.register('list', () => {
+      return { msg: 'Commands: \n'+cmd.listCommands()}
+    }, {
+      description: 'lists all commands'
+    })
+
     cmd.register('help', (name) => {
       return { msg: cmd.help(name) }
+    }, {
+      description: 'prints more information of a command'
     })
     .addArgument('name', ArgType.String, {required: true})
 
     bot.on('message', (msg) => {
       (function (msg){  
         cmd.execute(msg.content).then((res) => {
-          if(!res){
-            return
-          }
-
-          let message = (res && res.msg) ? res.msg : null
+          let response = (res && res.msg) ? res.msg : null
           let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
 
-          return msg.channel.send(message, attachment)
+          return bot.send(msg, response, attachment)
 
         }).catch((err) => {
           console.log(err.toString(), err.stack)
-          return msg.channel.send(err.toString())
+          return bot.send(msg, err.toString())
         })
       })(msg)
     })

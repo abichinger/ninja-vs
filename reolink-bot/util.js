@@ -116,7 +116,7 @@ function parseTime(time){
     multip = 60*60
   }
 
-  let parsed = parseInt(time)
+  let parsed = parseFloat(time)
   if(isNaN(parsed)){
     return undefined
   }

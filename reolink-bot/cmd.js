@@ -175,14 +175,6 @@ class CommandHandler {
     constructor(prefix) {
         this.prefix = prefix
         this.cmds = {}
-
-        this.register('list', () => {
-            return {
-                msg: Object.values(this.cmds).map((cmd) => `${this.prefix+cmd.name}: ${cmd.description()}`).join('\n')
-            }
-        }, {
-            description: 'lists all commands'
-        })
     }
 
     register(name, action, options) {
@@ -192,9 +184,13 @@ class CommandHandler {
     }
 
     async execute(cmdStr){
+
         if(!cmdStr.startsWith(this.prefix)){
             return
         }
+
+        console.log(`${new Date().toISOString()}: `, cmdStr)
+
         let [name, ...args] = cmdStr.substr(this.prefix.length).split(' ')
         args = args.join(' ')
 
@@ -210,7 +206,7 @@ class CommandHandler {
             return res
         }
         catch(err) {
-            console.log(err.toString(), err.stack)
+            console.log(err)
             throw this.help(cmd.name)
         }
         
@@ -231,6 +227,10 @@ class CommandHandler {
         + (desc ? `\n\n${desc}` : '')
         + (positionals.length > 0 ? `\n\npositional arguments:\n${positionals.join('\n')}` : '')
         + (optionals.length > 0 ? `\n\noptions:\n${optionals.join('\n')}` : '')
+    }
+
+    listCommands(){
+        return Object.values(this.cmds).map((cmd) => `${this.prefix+cmd.name}: ${cmd.description()}`).join('\n')
     }
 
 }
