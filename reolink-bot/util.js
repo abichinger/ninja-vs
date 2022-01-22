@@ -124,8 +124,24 @@ function parseTime(time){
   return parsed*multip
 }
 
+function extractBracket(values, opening='"', closing='"', separator=' '){
+  if(!values[0].startsWith(opening)){
+    return values.splice(0,1)[0]
+  }
+
+  for(let i = 0; i < values.length; i++) {
+    if(values[i].endsWith(closing)){
+      let res = values.splice(0, i+1).join(separator)
+      return res.substr(1, res.length-2)
+    }
+  }
+  
+  throw 'closing bracket not found'
+}
+
 module.exports = {
   VideoCapture,
-  parseTime
+  parseTime,
+  extractBracket,
 }
   

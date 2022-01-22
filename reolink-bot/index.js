@@ -107,7 +107,7 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  async motion(images, drawRectangles=true, minArea, thresh, delay, blur, width) {
+  async motion(images, drawRectangles=true, minArea=0.003, thresh=20, blur=11, width=1000) {
     //inspired by https://www.pyimagesearch.com/2015/05/25/basic-motion-detection-and-tracking-with-python-and-opencv/
     
     if(images.length != 2){
@@ -151,7 +151,7 @@ class ReolinkBot extends EventEmitter {
     return true
   }
 
-  async motionDetect(minArea=0.003, thresh=20, delay=100, blur=11, width=1000){
+  async motionDetect(minArea, thresh, delay, blur, width){
     let images = []
     let size = [1920, 1080]  
     await this.getVC(size, delay).capture(2, (frame) => {
@@ -202,7 +202,6 @@ class ReolinkBot extends EventEmitter {
     
     let msg = {
       content: cmd,
-      //channel: (await this.discord.channels.fetch(channel)),
       channel: {
         send: async (message, attachment) => {
           if(filter && !attachment){
@@ -262,17 +261,16 @@ function main(){
     cmd.register('motion', bot.motionDetect.bind(bot), {
       description: 'motion detection'
     })
-
-    cmd.register('detect', bot.detect.bind(bot), {
-      description: 'combined motion and object detection'
-    })
-    .addArgument('exclude', ArgType.List, {default: []})
-
     .addArgument('area', ArgType.Float, {default: 0.001})
     .addArgument('thresh', ArgType.Number, {default: 20})
     .addArgument('delay', ArgType.Number, {default: 100})
     .addArgument('blur', ArgType.Number, {default: 11})
     .addArgument('width', ArgType.Number, {default: 1000})
+
+    cmd.register('detect', bot.detect.bind(bot), {
+      description: 'combined motion and object detection'
+    })
+    .addArgument('exclude', ArgType.List, {default: []})
 
     cmd.register('set-interval', bot.setInterval.bind(bot), {
       description: 'executes a command periodically'
@@ -292,6 +290,11 @@ function main(){
       description: 'list intervals'
     })
 
+    cmd.register('help', (name) => {
+      return { msg: cmd.help(name) }
+    })
+    .addArgument('name', ArgType.String, {required: true})
+
     bot.on('message', (msg) => {
       (function (msg){  
         cmd.execute(msg.content).then((res) => {
@@ -305,7 +308,8 @@ function main(){
           return msg.channel.send(message, attachment)
 
         }).catch((err) => {
-          console.log("cmd error: ", err.toString())
+          console.log(err.toString(), err.stack)
+          return msg.channel.send(err.toString())
         })
       })(msg)
     })
