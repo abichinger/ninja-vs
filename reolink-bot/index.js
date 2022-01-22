@@ -7,8 +7,9 @@ const cocoSsd = require('@tensorflow-models/coco-ssd');
 const EventEmitter = require('events');
 const cv = require("opencv4nodejs-prebuilt")
 const ffmpeg = require('fluent-ffmpeg')
-
+const { VideoCapture } = require('./util')
 const tmpDir = './.tmp';
+const { CommandHandler, ArgType } = require('./cmd')
 
 /*
 Commands:
@@ -28,9 +29,7 @@ class ReolinkBot extends EventEmitter {
     super()
     this.client = client
     this.discord = new Client()
-    this.intervals = {}
-    this.detectCooldown = 0
-    this.lastDetect = 0
+    this.intervals = []
   }
 
   initDiscord() {
@@ -45,39 +44,60 @@ class ReolinkBot extends EventEmitter {
     this.discord.login(process.env.DISCORD_TOKEN)
   }
 
+  getVC(size, delay){
+    if (!this.vc) {
+      let rtsp = this.client.rtspMain()
+      this.vc = new VideoCapture(rtsp, delay, size) //TODO: fix delay and size
+    }
+    return this.vc
+  }
+
   /**
    * 
    * @param {Message} msg 
    * @param {boolean} silent 
    */
-  async detect(silent=false) {
+  async objects(img, exclude=[], drawRectangles=true) {
     if(!this.model){
       this.model = await cocoSsd.load()
     }
 
-    let buffer = await this.client.snap()
-    let img = await cv.imdecode(buffer)
     let tensor = tf.tensor(img.getData(), [img.rows, img.cols, img.channels])
 
     let predictions = await this.model.detect(tensor)
-
-    if(silent && predictions.length == 0){
-      return
+    predictions = predictions.filter((p) => !exclude.includes(p.class))
+    if (predictions.length == 0){
+      return []
     }
 
-    this.lastDetect = new Date().getTime()
-
-    for(let prediction of predictions){
-      let r = new cv.Rect(...prediction.bbox)
-      img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
+    if(drawRectangles){
+      for(let prediction of predictions){
+        let r = new cv.Rect(...prediction.bbox)
+        img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
+      }
     }
     
-    let response = (predictions.length == 0) ? 'nothing' : predictions.map(p => p.class).join(', ')
-    //msg.channel.send(response, new MessageAttachment(tmpDir+'/detect.jpg'))
-    return {
-      msg: response,
-      attachment: cv.imencode('.jpg', img)
+    return predictions.map(p => p.class)
+  }
+
+  async detectObjects(exclude) {
+    let buffer = await this.client.snap()
+    let img = await cv.imdecode(buffer)
+
+    let objects = await this.objects(img, exclude)
+
+    if(objects.length > 0) {
+      return {
+        msg: objects,
+        attachment: cv.imencode('.jpg', img)
+      }
     }
+    else {
+      return {
+        msg: "no objects detected",
+      }
+    }
+    
   }
 
   async snap(){
@@ -87,63 +107,12 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  captureFrames(input, frames, fps, size=[1920, 1080], cb) {
-    return new Promise((resolve, reject) => {
-      let frameSize = size[0]*size[1]*3
-      let frame = new Uint8Array(frameSize)
-      let curSize = 0
-      let i = 0
-
-      let command  = ffmpeg(input)
-      .addOutputOption(`-frames:v ${frames}`)
-      .addOutputOption(`-vf fps=${fps}`)
-      .addOutputOption(`-s ${size[0]}x${size[1]}`)
-      .addOutputOption(`-f image2pipe`)
-      .addOutputOption(`-vcodec rawvideo`)
-      .addOutputOption(`-pix_fmt rgb24`)
-      .on('error', function(err) {
-        console.log('An error occurred: ' + err.message);
-      })
-      .on('start', (cmdline) => console.log(cmdline))
-
-      let ffstream = command.pipe();
-      ffstream.on('error', (err) => {
-        reject(err)
-      })
-
-      ffstream.on('data', (chunk) => {
-        if (curSize + chunk.length >= frame.length) {
-          try {
-            frame.set(chunk, curSize)
-          }
-          finally {
-            cb(frame, i++)
-            curSize = 0
-          }
-        }
-        else {
-          frame.set(chunk, curSize)
-          curSize += chunk.length
-        }
-      })
-
-      ffstream.on('close', () => {
-        resolve()
-      })
-
-    })    
-  }
-
-  async motionDetect(minArea=0.001, width=1000, blur=11, thresh=20, delay=100){
+  async motion(images, drawRectangles=true, minArea, thresh, delay, blur, width) {
     //inspired by https://www.pyimagesearch.com/2015/05/25/basic-motion-detection-and-tracking-with-python-and-opencv/
-
-    let images = [] 
-    let fps = parseInt(1000/delay)
-    let rtsp = this.client.rtspMain()
-
-    await this.captureFrames(rtsp, 2, fps, [1920, 1080], (frame) => {
-      images.push(new cv.Mat(Buffer.from(frame), 1080, 1920, cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
-    })
+    
+    if(images.length != 2){
+      throw 'expected two images'
+    }
 
     let scale = 1;
       
@@ -167,141 +136,107 @@ class ReolinkBot extends EventEmitter {
     contours = contours.filter(c => c.area > minPixels)
 
     if(contours.length <= 0){
-      return {
-        msg: "no motion detected"
+      return false
+    }
+
+    if(drawRectangles){
+      let img = images[1]
+      for(let c of contours) {
+        let r = c.boundingRect()
+        r = r.rescale(1/scale)
+        img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
       }
     }
 
-    let img = images[1]
+    return true
+  }
 
-    for(let c of contours) {
-      let r = c.boundingRect()
-      r = r.rescale(1/scale)
-      img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
+  async motionDetect(minArea=0.003, thresh=20, delay=100, blur=11, width=1000){
+    let images = []
+    let size = [1920, 1080]  
+    await this.getVC(size, delay).capture(2, (frame) => {
+      images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
+    })
+
+    let motion = await this.motion(images, true, minArea, thresh, delay, blur, width)
+
+    if (motion) {
+      return {
+        msg: "motion detected",
+        attachment: cv.imencode('.jpg', images[1])
+      }
+    }
+    else {
+      return {
+        msg: "no motion detected",
+      }
+    }
+  }
+
+  async detect(exclude){
+
+    let images = []
+    let size = [1920, 1080]   
+    let delay = 100   
+    await this.getVC(size, delay).capture(2, (frame) => {
+      images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
+    })
+
+    let motion = await this.motion(images, false)
+    if(!motion){
+      return
+    }
+
+    let objects = await this.objects(images[1], exclude)
+    if(objects.length == 0){
+      return
     }
 
     return {
-      msg: "motion detected",
-      attachment: cv.imencode('.jpg', img)
+      msg: objects,
+      attachment: cv.imencode('.jpg', images[1])
     }
   }
 
-  setSnapInterval(msg, time){
-    let interval = this.setInterval(`snap-${msg.channel.name}`, time, ((msg)=>{
-      return () => {
-        this.snap(msg)
-      }
-    })(msg))
-    if(interval != -1){
-      msg.channel.send(`snap successfully scheduled every ${time}`)
-    }
-    else{
-      msg.channel.send('snap schedule disabled')
-    }
-  }
-
-  setDetectInterval(msg, time){
-    let interval = this.setInterval(`detect-${msg.channel.name}`, time, ((msg)=>{
-      return () => {
-        let now = new Date().getTime()
-        if(now > this.lastDetect + this.detectCooldown)
-          this.detect(msg, true)
-      }
-    })(msg))
-    if(interval != -1){
-      msg.channel.send(`detect successfully scheduled every ${time}`)
-    }
-    else{
-      msg.channel.send('detect schedule disabled')
-    }
-  }
-
-  setInterval(name, time, func){
-    if(this.intervals[name]){
-      clearInterval(this.intervals[name])
-    }
-
-    let seconds = this.parseTime(time)
-    if(seconds > 0){
-      return this.intervals[name] = setInterval(func, seconds*1000)
-    }
-    else{
-      return -1
-    }
-  }
-
-  setCooldown(msg, _, time){
-    let seconds = this.parseTime(time)
-    this.detectCooldown = seconds*1000
-    msg.channel.send(`detect cooldown set to ${time}`)
-  }
-
-  /**
-   * 
-   * @param {string} time 
-   */
-  parseTime(time){
-    let multip = 1
-    if(time.endsWith('m')){
-      multip = 60
-    }
-    else if(time.endsWith('h')){
-      multip = 60*60
-    }
-
-    let parsed = parseInt(time)
-    if(isNaN(parsed)){
-      throw 'invalid time'
-    }
-
-    return parsed*multip
-  }
-}
-
-class CommandHandler {
-
-  constructor(prefix){
-    this.prefix = prefix
-    this.cmds = []
-  }
-
-  register(pattern, action, help='') {
-      
-    this.cmds.push({
-      re: RegExp(pattern),
-      action: action,
-      help: help
-    })
-
-  }
-
-  /**
-   * 
-   * @param {string} command 
-   */
-  async execute(msg){
-    let command = msg.content
-    if(!command.startsWith(this.prefix)){
-      return
-    }
-    command = command.substr(this.prefix.length)
-
-    for(let cmd of this.cmds){
-      if(command.match(cmd.re)){
-        let [_, ...args] = command.split(' ')
-        let res = await cmd.action(...args)
-
-        let message = (res && res.msg) ? res.msg : null
-        let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
-
-        return msg.channel.send(message, attachment)
+  async setInterval(cmd, channel, interval, filter){
+    
+    let msg = {
+      content: cmd,
+      //channel: (await this.discord.channels.fetch(channel)),
+      channel: {
+        send: async (message, attachment) => {
+          if(filter && !attachment){
+            return
+          }
+          let ch = await this.discord.channels.fetch(channel)
+          return ch.send(message, attachment)
+        }
       }
     }
 
-    throw 'invalid command'
+    let id = setInterval(() => {
+      this.emit('message', msg)
+    }, interval*1000)
+
+    this.intervals.push({cmd, channel, interval, id})
+  }
+
+  async clearInterval(index){
+    let interval = this.intervals.splice(index, 1)[0]
+    if(interval){
+      clearInterval(interval.id)
+    }
+  }
+
+  async listIntervals(){
+    return {
+      msg: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.cmd}, ${int.channel}, ${int.interval}s`).join('\n') : 'no intervals'
+    }
   }
 
 }
+
+
 
 async function initReolinkBot(){
   let reoclient = new reocgi.Client(process.env.REOLINK_HOST)
@@ -315,17 +250,60 @@ function main(){
     bot.initDiscord()
     let cmd = new CommandHandler('!')
 
-    cmd.register('^snap$', bot.snap.bind(bot))
-    cmd.register('^snap [0-9]+(s|m|h)', bot.setSnapInterval.bind(bot))
-    cmd.register('^detect$', bot.detect.bind(bot))
-    cmd.register('^detect [0-9]+(s|m|h)', bot.setDetectInterval.bind(bot))
-    cmd.register('^detect cooldown [0-9]+(s|m|h)', bot.setCooldown.bind(bot))
-    cmd.register('^motion$', bot.motionDetect.bind(bot))
+    cmd.register('snap', bot.snap.bind(bot), {
+      description: 'takes a snapshot'
+    })
+
+    cmd.register('objects', bot.detectObjects.bind(bot), {
+      description: 'object detection'
+    })
+    .addArgument('exclude', ArgType.List, {default: []})
+
+    cmd.register('motion', bot.motionDetect.bind(bot), {
+      description: 'motion detection'
+    })
+
+    cmd.register('detect', bot.detect.bind(bot), {
+      description: 'combined motion and object detection'
+    })
+    .addArgument('exclude', ArgType.List, {default: []})
+
+    .addArgument('area', ArgType.Float, {default: 0.001})
+    .addArgument('thresh', ArgType.Number, {default: 20})
+    .addArgument('delay', ArgType.Number, {default: 100})
+    .addArgument('blur', ArgType.Number, {default: 11})
+    .addArgument('width', ArgType.Number, {default: 1000})
+
+    cmd.register('set-interval', bot.setInterval.bind(bot), {
+      description: 'executes a command periodically'
+    })
+    .addArgument('cmd', ArgType.String, {required: true})
+    .addArgument('channel', ArgType.String, {required: true})
+    .addArgument('interval', ArgType.Time, {required: true})
+    .addArgument('filter', ArgType.Bool, {default: false})
+    //.addArgument('cooldown', ArgType.Time, {default: 5})
+
+    cmd.register('clear-interval', bot.clearInterval.bind(bot), {
+      description: 'clear interval'
+    })
+    .addArgument('i', ArgType.Number, {default: 0})
+
+    cmd.register('intervals', bot.listIntervals.bind(bot), {
+      description: 'list intervals'
+    })
 
     bot.on('message', (msg) => {
       (function (msg){  
-        cmd.execute(msg).then(() => {
-          console.log(msg.content + ' processed')
+        cmd.execute(msg.content).then((res) => {
+          if(!res){
+            return
+          }
+
+          let message = (res && res.msg) ? res.msg : null
+          let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
+
+          return msg.channel.send(message, attachment)
+
         }).catch((err) => {
           console.log("cmd error: ", err.toString())
         })
@@ -340,5 +318,5 @@ if (require.main === module) {
 
 module.exports = { 
   ReolinkBot,
-  initReolinkBot
+  initReolinkBot,
 }
