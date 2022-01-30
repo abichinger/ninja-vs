@@ -1,0 +1,6 @@
+services:
+  reolink-bot:
+    build: .
+    env_file:
+    - reolink-bot/.env
+    restart: always

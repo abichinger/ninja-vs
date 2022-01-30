@@ -64,8 +64,9 @@ class VideoCapture extends EventEmitter {
       if (curSize + chunk.length >= frame.length) {
         try {
           frame.set(chunk, curSize)
-        }
-        finally {
+        } catch(err){
+          console.log(err)
+        } finally {
           this.emit('frame', frame)
           curSize = 0
         }
