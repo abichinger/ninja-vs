@@ -2,27 +2,12 @@ const dotenv = require('dotenv')
 dotenv.config()
 const {Client, MessageAttachment} = require('discord.js')
 const reocgi = require('reolink-cgi')
-const tf = require('@tensorflow/tfjs-node')
-const cocoSsd = require('@tensorflow-models/coco-ssd');
 const EventEmitter = require('events');
-const cv = require("opencv4nodejs-prebuilt")
-const ffmpeg = require('fluent-ffmpeg')
-const { VideoCapture } = require('./util')
+const cv = require("@u4/opencv4nodejs")
+const { VideoCapture, resizeToSquare, unwrapYOLOv5 } = require('./util')
 const tmpDir = './.tmp';
 const { CommandHandler, ArgType } = require('./cmd')
 const crypto = require("crypto");
-
-/*
-Commands:
-
-!snap
-!snap [time]
-!detect
-!detect [time]
-!detect cooldown [time]
-!detect snooze [time]
-
-*/
 
 class ReolinkBot extends EventEmitter {
 
@@ -42,7 +27,7 @@ class ReolinkBot extends EventEmitter {
       this.emit('message', msg)
     });
     
-    this.discord.login(process.env.DISCORD_TOKEN)
+    this.discord.login(process.env.RLB_DISCORD_TOKEN)
   }
 
   getVC(size, delay){
@@ -59,37 +44,51 @@ class ReolinkBot extends EventEmitter {
    * @param {boolean} silent 
    */
   async objects(img, exclude=[], drawRectangles=true) {
-    if(!this.model){
-      this.model = await cocoSsd.load()
+    if(!this.net){
+      this.net = await cv.readNetFromONNX(process.env.RLB_ONNX_FILE || "dnn/yolov5s.onnx")
     }
 
-    let tensor = tf.tensor(img.getData(), [img.rows, img.cols, img.channels])
+    let net = this.net
+    
+    let imgResized = resizeToSquare(img, 640)
 
-    let predictions = await this.model.detect(tensor)
+    let inputBlob = cv.blobFromImage(imgResized, 1/255, new cv.Size(640, 640), new cv.Vec3(0, 0, 0), true, false);
+    net.setInput(inputBlob);
+
+    let outputBlob = net.forward();
+    outputBlob = outputBlob.flattenFloat(outputBlob.sizes[1], outputBlob.sizes[2])
+
+    let {boxes, classNames} = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640)
+    let predictions = classNames.map((name, i) => {
+      return {
+        class: name,
+        box: boxes[i]
+      }
+    })
+
     predictions = predictions.filter((p) => !exclude.includes(p.class))
     if (predictions.length == 0){
       return []
     }
 
     if(drawRectangles){
-      for(let prediction of predictions){
-        let r = new cv.Rect(...prediction.bbox)
-        img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
+      for(let p of predictions){
+        img.drawRectangle(p.box, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
       }
     }
-    
-    return predictions.map(p => p.class)
+
+    return predictions
   }
 
   async detectObjects(exclude) {
     let buffer = await this.client.snap()
     let img = await cv.imdecode(buffer)
 
-    let objects = await this.objects(img, exclude)
+    let predictions = await this.objects(img, exclude)
 
-    if(objects.length > 0) {
+    if(predictions.length > 0) {
       return {
-        msg: objects,
+        msg: predictions.map((p) => p.class).join(', '),
         attachment: cv.imencode('.jpg', img)
       }
     }
@@ -102,9 +101,9 @@ class ReolinkBot extends EventEmitter {
   }
 
   async snap(){
-    await this.client.saveSnap(tmpDir+'/snap.jpg')
+    let buffer = await this.client.snap()
     return {
-      attachment: tmpDir+'/snap.jpg'
+      attachment: buffer
     }
   }
 
@@ -289,8 +288,8 @@ class ReolinkBot extends EventEmitter {
 
 
 async function initReolinkBot(){
-  let reoclient = new reocgi.Client(process.env.REOLINK_HOST)
-  await reoclient.login(process.env.REOLINK_USER, process.env.REOLINK_PASSWORD)
+  let reoclient = new reocgi.Client(process.env.RLB_REOLINK_HOST)
+  await reoclient.login(process.env.RLB_REOLINK_USER, process.env.RLB_REOLINK_PASSWORD)
   return new ReolinkBot(reoclient)
 }
 

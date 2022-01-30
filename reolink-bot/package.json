@@ -11,19 +11,14 @@
     "url": "https://github.com/abichinger/reolink-discord-bot"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "do-install": "build-opencv build"
   },
   "dependencies": {
-    "@tensorflow-models/coco-ssd": "^2.0.3",
-    "@tensorflow/tfjs-core": "3.13.0",
-    "@tensorflow/tfjs-node": "3.13.0",
-    "canvas": "^2.6.1",
+    "@u4/opencv4nodejs": "https://github.com/abichinger/opencv4nodejs#master",
     "discord.js": "^12.2.0",
     "dotenv": "^8.2.0",
-    "execa": "^6.0.0",
     "fluent-ffmpeg": "^2.1.2",
-    "jpeg-js": "^0.4.0",
-    "opencv4nodejs-prebuilt": "^5.3.4",
     "reolink-cgi": "1.0.0"
   },
   "devDependencies": {

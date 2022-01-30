@@ -1,5 +1,16 @@
 const EventEmitter = require('events');
 const ffmpeg = require('fluent-ffmpeg')
+const cv = require("@u4/opencv4nodejs")
+
+const classNames = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+  'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+  'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+  'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+  'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+  'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+  'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+  'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+  'hair drier', 'toothbrush']
 
 class VideoCapture extends EventEmitter {
 
@@ -139,9 +150,79 @@ function extractBracket(values, opening='"', closing='"', separator=' '){
   throw 'closing bracket not found'
 }
 
+function resizeToSquare(img, size) {
+    let imgResized = img.resizeToMax(size)
+    let bottom = size - imgResized.rows
+    let right = size - imgResized.cols
+    return imgResized.copyMakeBorder(0, bottom, 0, right, cv.BORDER_CONSTANT)
+}
+
+/**
+ * 
+ * @param {cv.Mat} output 
+ * @param {number} scale 
+ * @returns 
+ */
+
+function unwrapYOLOv5(output, scale, confidenceThreshold=0.5, nmsThreshold=0.3) {
+  let boxes = []
+  let confidences = []
+  let classIds = []
+
+  for(let i = 0; i < output.rows; i++){
+
+    let x = output.at(i, 0)
+    let y = output.at(i, 1)
+    let w = output.at(i, 2)
+    let h = output.at(i, 3)
+    let box = new cv.Rect(
+      parseInt((x - 0.5 * w) * scale), 
+      parseInt((y - 0.5 * h) * scale),
+      parseInt(w * scale),
+      parseInt(h * scale),
+    )
+
+    let confidence = output.at(i, 4)
+
+    let classScore = 0
+    let classId = 0
+    for(let j = 5; j < output.cols; j++){
+      let score = output.at(i, j)
+      if (score > classScore){
+        classScore = score
+        classId = j-5
+      }
+    }
+
+    boxes.push(box)
+    confidences.push(confidence)
+    classIds.push(classId)
+  }
+
+  let indices = cv.NMSBoxes(
+    boxes,
+    confidences, confidenceThreshold, nmsThreshold
+  );
+
+  return indices.reduce((res, i) => {
+    res.boxes.push(boxes[i])
+    res.confidences.push(confidences[i])
+    res.classIds.push(classIds[i])
+    res.classNames.push(classNames[classIds[i]])
+    return res
+  }, {
+    boxes: [],
+    confidences: [],
+    classIds: [],
+    classNames: []
+  })
+}
+
 module.exports = {
   VideoCapture,
   parseTime,
   extractBracket,
+  resizeToSquare,
+  unwrapYOLOv5
 }
   
