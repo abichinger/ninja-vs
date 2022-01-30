@@ -153,10 +153,15 @@ class ReolinkBot extends EventEmitter {
 
   async motionDetect(minArea, thresh, delay, blur, width){
     let images = []
-    let size = [1920, 1080]  
-    await this.getVC(size, delay).capture(2, (frame) => {
-      images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
-    })
+    let size = [1920, 1080]
+    try {
+      await this.getVC(size, delay).capture(2, (frame) => {
+        images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
+      })
+    } catch(err) {
+      console.log(err)
+      return
+    }
 
     let motion = await this.motion(images, true, minArea, thresh, blur, width)
 
@@ -178,22 +183,27 @@ class ReolinkBot extends EventEmitter {
     let images = []
     let size = [1920, 1080]   
     let delay = 100   
-    await this.getVC(size, delay).capture(2, (frame) => {
-      images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
-    })
+    try {
+      await this.getVC(size, delay).capture(2, (frame) => {
+        images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
+      })
+    } catch(err) {
+      console.log(err)
+      return
+    }
 
     let motion = await this.motion(images, false)
     if(!motion){
       return
     }
 
-    let objects = await this.objects(images[1], exclude)
-    if(objects.length == 0){
+    let predictions = await this.objects(images[1], exclude)
+    if(predictions.length == 0){
       return
     }
 
     return {
-      msg: objects,
+      msg: predictions.map((p) => p.class).join(', '),
       attachment: cv.imencode('.jpg', images[1])
     }
   }

@@ -24,16 +24,22 @@ class VideoCapture extends EventEmitter {
     this.timeout = timeout
 
     this.command = null
-    this.cb = null
   }
 
   isOpen(){
     return this.command !== null
   }
 
-  closed(){
-    this.command = null
-    this.emit('close')
+  close(err){
+    if(this.tId) {
+      clearTimeout(this.tId)
+    }
+    if(this.command !== null){
+      let cmd = this.command
+      this.command = null
+      cmd.kill()
+      this.emit('close', err)
+    }
   }
 
   open(){
@@ -45,7 +51,7 @@ class VideoCapture extends EventEmitter {
     .addOutputOption(`-pix_fmt rgb24`)
     .on('error', (err) => {
       console.log(err.message);
-      this.closed()
+      this.close(err)
     })
     .on('start', (cmdline) => {
       console.log(cmdline)
@@ -64,12 +70,12 @@ class VideoCapture extends EventEmitter {
       if (curSize + chunk.length >= frame.length) {
         try {
           frame.set(chunk, curSize)
-        } catch(err){
-          console.log(err)
-        } finally {
           this.emit('frame', frame)
-          curSize = 0
+        } catch(err){
+          this.close(err)
         }
+
+        curSize = 0
       }
       else {
         frame.set(chunk, curSize)
@@ -78,7 +84,7 @@ class VideoCapture extends EventEmitter {
     })
 
     ffstream.on('close', () => {
-      this.closed()
+      this.close()
     })
   }
 
@@ -87,9 +93,7 @@ class VideoCapture extends EventEmitter {
       clearTimeout(this.tId)
     }
     this.tId = setTimeout(() => {
-      if(this.command !== null){
-        this.command.kill()
-      }
+      this.close()
     }, this.timeout)
 
     if(!this.isOpen()) {
