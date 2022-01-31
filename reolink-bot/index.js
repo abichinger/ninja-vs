@@ -58,11 +58,12 @@ class ReolinkBot extends EventEmitter {
     let outputBlob = net.forward();
     outputBlob = outputBlob.flattenFloat(outputBlob.sizes[1], outputBlob.sizes[2])
 
-    let {boxes, classNames} = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640)
+    let {boxes, classNames, confidences} = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640)
     let predictions = classNames.map((name, i) => {
       return {
         class: name,
-        box: boxes[i]
+        box: boxes[i],
+        confidence: confidences[i]
       }
     })
 
@@ -88,7 +89,7 @@ class ReolinkBot extends EventEmitter {
 
     if(predictions.length > 0) {
       return {
-        msg: predictions.map((p) => p.class).join(', '),
+        msg: predictions.map((p) => `${p.class}(${p.confidence})`).join(', '),
         attachment: cv.imencode('.jpg', img)
       }
     }
@@ -136,19 +137,23 @@ class ReolinkBot extends EventEmitter {
     contours = contours.filter(c => c.area > minPixels)
 
     if(contours.length <= 0){
-      return false
+      return []
     }
+
+    let boxes = contours.map((c) => {
+      let r = c.boundingRect()
+      return r.rescale(1/scale)
+    })
+
 
     if(drawRectangles){
       let img = images[1]
-      for(let c of contours) {
-        let r = c.boundingRect()
-        r = r.rescale(1/scale)
-        img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
+      for(let r of boxes) {
+        img.drawRectangle(r, new cv.Vec(255, 0, 0), 3, cv.LINE_8)
       }
     }
 
-    return true
+    return boxes
   }
 
   async motionDetect(minArea, thresh, delay, blur, width){
@@ -163,9 +168,9 @@ class ReolinkBot extends EventEmitter {
       return
     }
 
-    let motion = await this.motion(images, true, minArea, thresh, blur, width)
+    let boxes = await this.motion(images, true, minArea, thresh, blur, width)
 
-    if (motion) {
+    if (boxes.length > 0) {
       return {
         msg: "motion detected",
         attachment: cv.imencode('.jpg', images[1])
@@ -192,8 +197,8 @@ class ReolinkBot extends EventEmitter {
       return
     }
 
-    let motion = await this.motion(images, false)
-    if(!motion){
+    let boxes = await this.motion(images)
+    if(boxes.length == 0){
       return
     }
 
@@ -203,7 +208,7 @@ class ReolinkBot extends EventEmitter {
     }
 
     return {
-      msg: predictions.map((p) => p.class).join(', '),
+      msg: predictions.map((p) => `${p.class}(${p.confidence})`).join(', '),
       attachment: cv.imencode('.jpg', images[1])
     }
   }
