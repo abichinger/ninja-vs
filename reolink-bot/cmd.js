@@ -70,6 +70,13 @@ class Command {
         return this
     }
 
+    appendArguments(other){
+        for(let [name, arg] of other.args.entries()) {
+            this.args.set(name, arg)
+        }
+        return this
+    }
+
     description() {
         return this.options.description ? this.options.description : ''
     }
@@ -188,8 +195,6 @@ class CommandHandler {
         if(!cmdStr.startsWith(this.prefix)){
             return
         }
-
-        console.log(`${new Date().toISOString()}: `, cmdStr)
 
         let [name, ...args] = cmdStr.substr(this.prefix.length).split(' ')
         args = args.join(' ')

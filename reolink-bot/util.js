@@ -1,6 +1,7 @@
 const EventEmitter = require('events');
 const ffmpeg = require('fluent-ffmpeg')
-const cv = require("@u4/opencv4nodejs")
+const cv = require("@u4/opencv4nodejs");
+const { readNetFromONNX } = require('@u4/opencv4nodejs');
 
 const classNames = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
   'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
@@ -223,11 +224,52 @@ function unwrapYOLOv5(output, scale, confidenceThreshold=0.5, nmsThreshold=0.3) 
   })
 }
 
+function getOption(options, key, defaultValue){
+  if(options && options[key] !== undefined){
+    return options[key]
+  }
+  else {
+    return defaultValue
+  }
+}
+
+/**
+ * 
+ * @param {cv.Rect} r1 
+ * @param {cv.Rect} r2 
+ * @returns 
+ */
+function boxIntersection(r1, r2){
+  
+  let left = (r) => r.x
+  let right = (r) => r.x + r.width
+  let top = (r) => r.y
+  let bottom = (r) => r.y + r.height
+  
+  return !(
+    left(r2) > right(r1) ||
+    right(r2) < left(r1) ||
+    top(r2) > bottom(r1) ||
+    bottom(r2) < top(r1)
+  )
+}
+
+function boxesIntersection(boxesA, boxesB) {
+  for(let r1 of boxesA){
+    for(let r2 of boxesB){
+      if(boxIntersection(r1, r2)) return true
+    }
+  }
+  return false
+}
+
 module.exports = {
   VideoCapture,
   parseTime,
   extractBracket,
   resizeToSquare,
-  unwrapYOLOv5
+  unwrapYOLOv5,
+  getOption,
+  boxesIntersection
 }
   

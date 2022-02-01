@@ -4,7 +4,7 @@ const {Client, MessageAttachment} = require('discord.js')
 const reocgi = require('reolink-cgi')
 const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
-const { VideoCapture, resizeToSquare, unwrapYOLOv5 } = require('./util')
+const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection } = require('./util')
 const tmpDir = './.tmp';
 const { CommandHandler, ArgType } = require('./cmd')
 const crypto = require("crypto");
@@ -43,7 +43,7 @@ class ReolinkBot extends EventEmitter {
    * @param {Message} msg 
    * @param {boolean} silent 
    */
-  async objects(img, exclude=[], drawRectangles=true) {
+  async objects(img, drawRectangles, exclude, confidenceThreshold) {
     if(!this.net){
       this.net = await cv.readNetFromONNX(process.env.RLB_ONNX_FILE || "dnn/yolov5s.onnx")
     }
@@ -58,38 +58,38 @@ class ReolinkBot extends EventEmitter {
     let outputBlob = net.forward();
     outputBlob = outputBlob.flattenFloat(outputBlob.sizes[1], outputBlob.sizes[2])
 
-    let {boxes, classNames, confidences} = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640)
-    let predictions = classNames.map((name, i) => {
-      return {
-        class: name,
-        box: boxes[i],
-        confidence: confidences[i]
+    let unwrapped = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640, confidenceThreshold)    
+    let res = {boxes:[], confidences: [], classNames: []}
+    unwrapped.classNames.forEach((name, i) => {
+      if(!exclude.includes(name)){
+        res.classNames.push(name)
+        res.confidences.push(unwrapped.confidences[i])
+        res.boxes.push(unwrapped.boxes[i])
       }
     })
 
-    predictions = predictions.filter((p) => !exclude.includes(p.class))
-    if (predictions.length == 0){
-      return []
+    if (res.classNames.length == 0){
+      return res
     }
 
     if(drawRectangles){
-      for(let p of predictions){
-        img.drawRectangle(p.box, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
+      for(let r of res.boxes){
+        img.drawRectangle(r, new cv.Vec(0, 255, 0), 3, cv.LINE_8)
       }
     }
 
-    return predictions
+    return res
   }
 
-  async detectObjects(exclude) {
+  async detectObjects(...options) {
     let buffer = await this.client.snap()
     let img = await cv.imdecode(buffer)
 
-    let predictions = await this.objects(img, exclude)
+    let { classNames, confidences } = await this.objects(img, true, ...options)
 
-    if(predictions.length > 0) {
+    if(classNames.length > 0) {
       return {
-        msg: predictions.map((p) => `${p.class}(${p.confidence})`).join(', '),
+        msg: classNames.map((name, i) => `${name}(${confidences[i]})`).join(', '),
         attachment: cv.imencode('.jpg', img)
       }
     }
@@ -108,9 +108,9 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  async motion(images, drawRectangles=true, minArea=0.003, thresh=20, blur=11, width=1000) {
+  async motion(images, drawRectangles, minArea, thresh, blur, width) {
     //inspired by https://www.pyimagesearch.com/2015/05/25/basic-motion-detection-and-tracking-with-python-and-opencv/
-    
+
     if(images.length != 2){
       throw 'expected two images'
     }
@@ -125,7 +125,8 @@ class ReolinkBot extends EventEmitter {
       .map(img => img.cvtColor(cv.COLOR_BGR2GRAY))
       .map(img => img.gaussianBlur(new cv.Size(blur, blur), 0))
 
-    let kernel = new cv.Mat(7, 7, cv.CV_8UC1, 255)
+    let kernelSize = Math.floor(width*0.007)
+    let kernel = new cv.Mat(kernelSize, kernelSize, cv.CV_8UC1, 255)
 
     let delta = processed[0].absdiff(processed[1])
       .threshold(thresh, 255, cv.THRESH_BINARY)
@@ -156,11 +157,11 @@ class ReolinkBot extends EventEmitter {
     return boxes
   }
 
-  async motionDetect(minArea, thresh, delay, blur, width){
+  async motionDetect(capWidth, capHeight, capDelay, ...options){
     let images = []
-    let size = [1920, 1080]
+    let size = [capWidth, capHeight]
     try {
-      await this.getVC(size, delay).capture(2, (frame) => {
+      await this.getVC(size, capDelay).capture(2, (frame) => {
         images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
       })
     } catch(err) {
@@ -168,7 +169,7 @@ class ReolinkBot extends EventEmitter {
       return
     }
 
-    let boxes = await this.motion(images, true, minArea, thresh, blur, width)
+    let boxes = await this.motion(images, true, ...options)
 
     if (boxes.length > 0) {
       return {
@@ -183,11 +184,11 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  async detect(exclude){
+  async detect(intersect, exclude, confidence, capWidth, capHeight, capDelay, ...motionArgs){
 
     let images = []
-    let size = [1920, 1080]   
-    let delay = 100   
+    let size = [capWidth, capHeight]   
+    let delay = capDelay
     try {
       await this.getVC(size, delay).capture(2, (frame) => {
         images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
@@ -197,18 +198,22 @@ class ReolinkBot extends EventEmitter {
       return
     }
 
-    let boxes = await this.motion(images)
+    let boxes = await this.motion(images, true, ...motionArgs)
     if(boxes.length == 0){
       return
     }
 
-    let predictions = await this.objects(images[1], exclude)
-    if(predictions.length == 0){
+    let {classNames, confidences, objBoxes} = await this.objects(images[1], true, exclude, confidence)
+    if(classNames.length == 0){
+      return
+    }
+
+    if(intersect && !boxesIntersection(boxes, objBoxes)) {
       return
     }
 
     return {
-      msg: predictions.map((p) => `${p.class}(${p.confidence})`).join(', '),
+      msg: classNames.map((name, i) => `${name}(${confidences[i]})`).join(', '),
       attachment: cv.imencode('.jpg', images[1])
     }
   }
@@ -258,7 +263,7 @@ class ReolinkBot extends EventEmitter {
           let timeout = interval*1000 + (cd > 0 ? cd : 0) - execTime
 
           if(timeout < 0){
-            console.log('can\'t keep up')
+            //console.log('can\'t keep up')
             timeout = 0
           }
 
@@ -314,28 +319,38 @@ function main(){
     bot.initDiscord()
     let cmd = new CommandHandler('!')
 
+
     cmd.register('snap', bot.snap.bind(bot), {
       description: 'takes a snapshot'
     })
 
-    cmd.register('objects', bot.detectObjects.bind(bot), {
+
+    let objectCmd = cmd.register('objects', bot.detectObjects.bind(bot), {
       description: 'object detection'
     })
-    .addArgument('exclude', ArgType.List, {default: []})
+    .addArgument('exclude', ArgType.List, {default: getOption(process.env, 'RLB_OBJECT_EXCLUDE', []), description: "a list of classes to exclude (e.g.: 'airplane, traffic light')"})
+    .addArgument('confidence', ArgType.Float, {default: getOption(process.env, 'RLB_OBJECT_CONFIDENCE', 0.6), description: "confidence threshold"})
 
-    cmd.register('motion', bot.motionDetect.bind(bot), {
+
+    let motionCmd = cmd.register('motion', bot.motionDetect.bind(bot), {
       description: 'motion detection'
     })
-    .addArgument('area', ArgType.Float, {default: 0.001})
-    .addArgument('thresh', ArgType.Number, {default: 20})
-    .addArgument('delay', ArgType.Number, {default: 100})
-    .addArgument('blur', ArgType.Number, {default: 11})
-    .addArgument('width', ArgType.Number, {default: 1000})
+    .addArgument('width', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_WIDTH', 2560), description: 'capture width'})
+    .addArgument('height', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_HEIGHT', 1440), description: 'capture height'})
+    .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_DELAY', 100), description: 'delay in ms between images'})
+    .addArgument('area', ArgType.Float, {default: getOption(process.env, 'RLB_MOTION_AREA', 0.001), description: 'min size of motion in percent'})
+    .addArgument('thresh', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_THRESHOLD', 20), description: 'threshold value between 0-255'})
+    .addArgument('blur', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_BLUR', 11), description: 'kernel size of gaussian blur, must be odd'})
+    .addArgument('pWidth', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_WIDTH', 1000), description: 'processing width'})
+
 
     cmd.register('detect', bot.detect.bind(bot), {
       description: 'combined motion and object detection'
     })
-    .addArgument('exclude', ArgType.List, {default: []})
+    .addArgument('intersect', ArgType.Bool, {default: true, description: 'whether the boxes of motion and object detection have to overlap'})
+    .appendArguments(objectCmd)
+    .appendArguments(motionCmd)
+
 
     cmd.register('set-interval', bot.setInterval.bind(bot), {
       description: 'executes a command periodically'
@@ -347,14 +362,17 @@ function main(){
     .addArgument('filter', ArgType.Bool, {default: false})
     //.addArgument('cooldown', ArgType.Time, {default: 5})
 
+
     cmd.register('clear-interval', bot.clearInterval.bind(bot), {
       description: 'clear interval'
     })
     .addArgument('i', ArgType.Number, {default: 0})
 
+
     cmd.register('intervals', bot.listIntervals.bind(bot), {
       description: 'list intervals'
     })
+
 
     cmd.register('list', () => {
       return { msg: 'Commands: \n'+cmd.listCommands()}
@@ -362,12 +380,14 @@ function main(){
       description: 'lists all commands'
     })
 
+
     cmd.register('help', (name) => {
       return { msg: cmd.help(name) }
     }, {
       description: 'prints more information of a command'
     })
     .addArgument('name', ArgType.String, {required: true})
+
 
     bot.on('message', (msg) => {
       (function (msg){  
