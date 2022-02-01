@@ -184,7 +184,41 @@ class ReolinkBot extends EventEmitter {
     }
   }
 
-  async detect(intersect, exclude, confidence, capWidth, capHeight, capDelay, ...motionArgs){
+  async smart(images, drawRectangles, intersect, ...options){
+    
+    let motionArgs = options.splice(0, this.motion.length-2)
+    let objectArgs = options
+
+    let empty = {
+      classNames: [],
+      confidences: [],
+      boxes: [],
+      motionBoxes: []
+    }
+
+    let motionBoxes = await this.motion(images, false, ...motionArgs)
+    if(motionBoxes.length == 0){
+      return empty
+    }
+
+    let {classNames, confidences, boxes} = await this.objects(images[1], drawRectangles, ...objectArgs)
+
+    if(intersect && !boxesIntersection(motionBoxes, boxes)) {
+      return empty
+    }
+
+    //draw motion boxes
+    if(drawRectangles){
+      for(let r of motionBoxes) {
+        images[1].drawRectangle(r, new cv.Vec(255, 0, 0), 3, cv.LINE_8)
+      }
+    }
+
+    return {classNames, confidences, boxes, motionBoxes}
+  }
+
+
+  async smartDetect(intersect, capWidth, capHeight, capDelay, ...options){
 
     let images = []
     let size = [capWidth, capHeight]   
@@ -198,17 +232,9 @@ class ReolinkBot extends EventEmitter {
       return
     }
 
-    let boxes = await this.motion(images, true, ...motionArgs)
-    if(boxes.length == 0){
-      return
-    }
+    let {classNames, confidences} = await this.smart(images, true, intersect, ...options)
 
-    let {classNames, confidences, boxes:objBoxes} = await this.objects(images[1], true, exclude, confidence)
-    if(classNames.length == 0){
-      return
-    }
-
-    if(intersect && !boxesIntersection(boxes, objBoxes)) {
+    if (classNames.length == 0){
       return
     }
 
@@ -344,12 +370,12 @@ function main(){
     .addArgument('pWidth', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_WIDTH', 1000), description: 'processing width'})
 
 
-    cmd.register('detect', bot.detect.bind(bot), {
+    cmd.register('smart', bot.smartDetect.bind(bot), {
       description: 'combined motion and object detection'
     })
     .addArgument('intersect', ArgType.Bool, {default: true, description: 'whether the boxes of motion and object detection have to overlap'})
-    .appendArguments(objectCmd)
     .appendArguments(motionCmd)
+    .appendArguments(objectCmd)
 
 
     cmd.register('set-interval', bot.setInterval.bind(bot), {

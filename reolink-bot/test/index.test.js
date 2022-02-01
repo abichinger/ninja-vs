@@ -1,68 +1,108 @@
-const fs = require('fs')
-const cv = require("opencv4nodejs-prebuilt")
-const { initReolinkBot } = require("..");
+const cv = require("@u4/opencv4nodejs")
+const { ReolinkBot } = require("..");
 
-function clearDir(dir){
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.mkdirSync(dir)
-}
-
-class VideoCaptureMock {
-
-    constructor(paths){
-        this.paths = paths
-    }
-
-    async capture(frames, cb) {
-        this.paths.map((path) => {
-            let img = cv.imread(path, cv.IMREAD_COLOR)
-            img = img.cvtColor(cv.COLOR_BGR2RGB).resize(1080, 1920);
-            cb(img.getData())
-        })
-    }
-}
-
-beforeEach(() => {
-    clearDir('.tmp');
-});
+//area, thresh, blur, width
+const motionOptions = [0.001, 20, 11, 640]
+const objectOptions = [[], 0.7]
 
 describe('motionDetection', () => {
     test('little motion', async () => {
-
-        jest.setTimeout(10000)
         
-        let bot = await initReolinkBot()
-        bot.vc = new VideoCaptureMock(['test/frames/little-motion-1.jpg', 'test/frames/little-motion-2.jpg'])
+        let bot = new ReolinkBot()
+
+        let images = [
+            cv.imread('test/frames/little-motion-1.jpg'), 
+            cv.imread('test/frames/little-motion-2.jpg')
+        ]
+        let boxes = await bot.motion(images, true, 0.0005, 15, 11, 1000)
+        //cv.imwrite('.tmp/little-motion.jpg', images[1])
     
-        let res = await bot.motionDetect(0.0003)
-    
-        expect(res.msg).toBe('motion detected')
+        expect(boxes.length).toBeGreaterThan(0)
     
     });
 
     test('motion', async () => {
-
-        jest.setTimeout(10000)
         
-        let bot = await initReolinkBot()
-        bot.vc = new VideoCaptureMock(['test/frames/motion-1.jpg', 'test/frames/motion-2.jpg'])
+        let bot = new ReolinkBot()
+
+        let images = [
+            cv.imread('test/frames/motion-1.jpg'), 
+            cv.imread('test/frames/motion-2.jpg')
+        ]
+        let boxes = await bot.motion(images, true, ...motionOptions)
     
-        let res = await bot.motionDetect()
-    
-        expect(res.msg).toBe('motion detected')
+        expect(boxes.length).toBeGreaterThan(0)
     
     });
 
     test('no motion', async () => {
-
-        jest.setTimeout(10000)
         
-        let bot = await initReolinkBot()
-        bot.vc = new VideoCaptureMock(['test/frames/motion-1.jpg', 'test/frames/motion-1.jpg'])
+        let bot = new ReolinkBot()
+
+        let images = [
+            cv.imread('test/frames/motion-1.jpg'), 
+            cv.imread('test/frames/motion-1.jpg')
+        ]
+        let boxes = await bot.motion(images, true, ...motionOptions)
     
-        let res = await bot.motionDetect()
+        expect(boxes.length).toBe(0)
     
-        expect(res.msg).toBe('no motion detected')
+    });
+})
+
+describe('objectDetection', () => {
+    test('test dog', async () => {
+        
+        let bot = new ReolinkBot()
+
+        let img = cv.imread('test/frames/dog.jpg')
+        let {classNames} = await bot.objects(img, true, ...objectOptions)
     
+        expect(new Set(classNames)).toStrictEqual(new Set(["dog"]))
+    
+    });
+
+    test('test car', async () => {
+        
+        let bot = new ReolinkBot()
+
+        let img = cv.imread('test/frames/car.jpg')
+        let {classNames} = await bot.objects(img, true, ...objectOptions)
+    
+        expect(new Set(classNames)).toStrictEqual(new Set(["car"]))
+    
+    });
+})
+
+describe('combinedDetection', () => {
+    test('basic', async () => {
+        let bot = new ReolinkBot()
+
+        let images = [
+            cv.imread('test/frames/motion-1.jpg'), 
+            cv.imread('test/frames/motion-2.jpg')
+        ]
+        let {classNames} = await bot.smart(images, true, true, ...motionOptions, ...objectOptions)
+        
+    
+        expect(classNames.includes('car')).toBe(true)
+    });
+
+    test('toggle intersection', async () => {
+        let bot = new ReolinkBot()
+
+        let images = [
+            cv.imread('test/frames/car-error.jpg'), 
+            cv.imread('test/frames/car.jpg')
+        ]
+        
+        let drawRectangles = false
+        let intersect = false
+        let {classNames} = await bot.smart(images, drawRectangles, intersect, ...motionOptions, ...objectOptions)
+        expect(classNames.includes('car')).toBe(true)
+
+        intersect = true
+        let {classNames:classNames2} = await bot.smart(images, drawRectangles, intersect, ...motionOptions, ...objectOptions)
+        expect(classNames2.length).toBe(0)
     });
 })
