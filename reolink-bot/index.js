@@ -203,7 +203,7 @@ class ReolinkBot extends EventEmitter {
       return
     }
 
-    let {classNames, confidences, objBoxes} = await this.objects(images[1], true, exclude, confidence)
+    let {classNames, confidences, boxes:objBoxes} = await this.objects(images[1], true, exclude, confidence)
     if(classNames.length == 0){
       return
     }
