@@ -355,13 +355,12 @@ function main(){
     cmd.register('set-interval', bot.setInterval.bind(bot), {
       description: 'executes a command periodically'
     })
-    .addArgument('cmd', ArgType.String, {required: true})
-    .addArgument('channel', ArgType.String, {required: true})
-    .addArgument('interval', ArgType.Time, {required: true})
-    .addArgument('cooldown', ArgType.Time, {default: 10})
-    .addArgument('filter', ArgType.Bool, {default: false})
-    //.addArgument('cooldown', ArgType.Time, {default: 5})
-
+    .addArgument('cmd', ArgType.String, {required: true, description: 'command to execute'})
+    .addArgument('channel', ArgType.String, {required: true, description: 'channel id'})
+    .addArgument('interval', ArgType.Time, {required: true, description: 'delay between runs'})
+    .addArgument('cooldown', ArgType.Time, {default: 10, description: 'time to wait after a message was sent'})
+    .addArgument('filter', ArgType.Bool, {default: false, description: 'filter messages without attachments'})
+    
 
     cmd.register('clear-interval', bot.clearInterval.bind(bot), {
       description: 'clear interval'
