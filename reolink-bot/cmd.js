@@ -70,9 +70,11 @@ class Command {
         return this
     }
 
-    appendArguments(other){
+    appendArguments(other, exclude=[]){
         for(let [name, arg] of other.args.entries()) {
-            this.args.set(name, arg)
+            if (!exclude.includes(name)){
+                this.args.set(name, arg)
+            }
         }
         return this
     }

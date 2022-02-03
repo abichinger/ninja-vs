@@ -1,7 +1,6 @@
 const dotenv = require('dotenv')
 dotenv.config()
 const {Client, MessageAttachment} = require('discord.js')
-const reocgi = require('reolink-cgi')
 const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
 const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection } = require('./util')
@@ -10,11 +9,11 @@ const crypto = require("crypto");
 
 class ReolinkBot extends EventEmitter {
 
-  constructor(client){
+  constructor(input){
     super()
-    this.client = client
     this.discord = new Client()
     this.intervals = new Map()
+    this.input = input
   }
 
   initDiscord() {
@@ -31,8 +30,7 @@ class ReolinkBot extends EventEmitter {
 
   getVC(size){
     if (!this.vc) {
-      let rtsp = this.client.rtspMain()
-      this.vc = new VideoCapture(rtsp, size)
+      this.vc = new VideoCapture(this.input, size)
     }
     return this.vc
   }
@@ -80,9 +78,9 @@ class ReolinkBot extends EventEmitter {
     return res
   }
 
-  async detectObjects(...options) {
-    let buffer = await this.client.snap()
-    let img = await cv.imdecode(buffer)
+  async detectObjects(capWidth, capHeight, ...options) {
+    let img = await this.snap(capWidth, capHeight)
+    if (img === undefined) return
 
     let { classNames, confidences } = await this.objects(img, true, ...options)
 
@@ -100,10 +98,20 @@ class ReolinkBot extends EventEmitter {
     
   }
 
-  async snap(){
-    let buffer = await this.client.snap()
+  async snap(capWidth, capHeight){
+    let size = [capWidth, capHeight]
+    try {
+      let vc = this.getVC(size)
+      return (await vc.read())
+    } catch(err) {
+      console.log(err)
+    }
+  }
+
+  async snapWrapper(capWidth, capHeight){
+    let img = await this.snap(capWidth, capHeight)
     return {
-      attachment: buffer
+      attachment: img !== undefined ? cv.imencode('.jpg', img) : null
     }
   }
 
@@ -327,103 +335,96 @@ class ReolinkBot extends EventEmitter {
 
 }
 
-
-
-async function initReolinkBot(){
-  let reoclient = new reocgi.Client(process.env.RLB_REOLINK_HOST)
-  await reoclient.login(process.env.RLB_REOLINK_USER, process.env.RLB_REOLINK_PASSWORD)
-  return new ReolinkBot(reoclient)
-}
-
 function main(){
-  initReolinkBot().then((bot) => {
+
+  let bot = new ReolinkBot(process.env.RLB_INPUT)
     
-    bot.initDiscord()
-    let cmd = new CommandHandler('!')
+  bot.initDiscord()
+  let cmd = new CommandHandler('!')
+
+  let snapCmd = cmd.register('snap', bot.snapWrapper.bind(bot), {
+    description: 'takes a snapshot'
+  })
+  .addArgument('width', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_WIDTH', 2560), description: 'capture width'})
+  .addArgument('height', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_HEIGHT', 1440), description: 'capture height'})
 
 
-    cmd.register('snap', bot.snap.bind(bot), {
-      description: 'takes a snapshot'
-    })
+  let objectCmd = cmd.register('objects', bot.detectObjects.bind(bot), {
+    description: 'object detection'
+  })
+  .appendArguments(snapCmd)
+  .addArgument('exclude', ArgType.List, {default: getOption(process.env, 'RLB_OBJECT_EXCLUDE', []), description: "a list of classes to exclude (e.g.: 'airplane, traffic light')"})
+  .addArgument('confidence', ArgType.Float, {default: getOption(process.env, 'RLB_OBJECT_CONFIDENCE', 0.6), description: "confidence threshold"})
 
 
-    let objectCmd = cmd.register('objects', bot.detectObjects.bind(bot), {
-      description: 'object detection'
-    })
-    .addArgument('exclude', ArgType.List, {default: getOption(process.env, 'RLB_OBJECT_EXCLUDE', []), description: "a list of classes to exclude (e.g.: 'airplane, traffic light')"})
-    .addArgument('confidence', ArgType.Float, {default: getOption(process.env, 'RLB_OBJECT_CONFIDENCE', 0.6), description: "confidence threshold"})
+  let motionCmd = cmd.register('motion', bot.motionDetect.bind(bot), {
+    description: 'motion detection'
+  })
+  .appendArguments(snapCmd)
+  .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_DELAY', 100), description: 'delay in ms between images'})
+  .addArgument('area', ArgType.Float, {default: getOption(process.env, 'RLB_MOTION_AREA', 0.001), description: 'min size of motion in percent'})
+  .addArgument('thresh', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_THRESHOLD', 20), description: 'threshold value between 0-255'})
+  .addArgument('blur', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_BLUR', 11), description: 'kernel size of gaussian blur, must be odd'})
+  .addArgument('pWidth', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_WIDTH', 1000), description: 'processing width'})
 
 
-    let motionCmd = cmd.register('motion', bot.motionDetect.bind(bot), {
-      description: 'motion detection'
-    })
-    .addArgument('width', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_WIDTH', 2560), description: 'capture width'})
-    .addArgument('height', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_HEIGHT', 1440), description: 'capture height'})
-    .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_DELAY', 100), description: 'delay in ms between images'})
-    .addArgument('area', ArgType.Float, {default: getOption(process.env, 'RLB_MOTION_AREA', 0.001), description: 'min size of motion in percent'})
-    .addArgument('thresh', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_THRESHOLD', 20), description: 'threshold value between 0-255'})
-    .addArgument('blur', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_BLUR', 11), description: 'kernel size of gaussian blur, must be odd'})
-    .addArgument('pWidth', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_WIDTH', 1000), description: 'processing width'})
+  cmd.register('smart', bot.smartDetect.bind(bot), {
+    description: 'combined motion and object detection'
+  })
+  .addArgument('intersect', ArgType.Bool, {default: true, description: 'whether the boxes of motion and object detection have to overlap'})
+  .appendArguments(motionCmd)
+  .appendArguments(objectCmd, ['width', 'height'])
 
 
-    cmd.register('smart', bot.smartDetect.bind(bot), {
-      description: 'combined motion and object detection'
-    })
-    .addArgument('intersect', ArgType.Bool, {default: true, description: 'whether the boxes of motion and object detection have to overlap'})
-    .appendArguments(motionCmd)
-    .appendArguments(objectCmd)
+  cmd.register('set-interval', bot.setInterval.bind(bot), {
+    description: 'executes a command periodically'
+  })
+  .addArgument('cmd', ArgType.String, {required: true, description: 'command to execute'})
+  .addArgument('channel', ArgType.String, {required: true, description: 'channel id'})
+  .addArgument('interval', ArgType.Time, {required: true, description: 'delay between runs'})
+  .addArgument('cooldown', ArgType.Time, {default: 10, description: 'time to wait after a message was sent'})
+  .addArgument('filter', ArgType.Bool, {default: false, description: 'filter messages without attachments'})
+  
+
+  cmd.register('clear-interval', bot.clearInterval.bind(bot), {
+    description: 'clear interval'
+  })
+  .addArgument('i', ArgType.Number, {default: 0})
 
 
-    cmd.register('set-interval', bot.setInterval.bind(bot), {
-      description: 'executes a command periodically'
-    })
-    .addArgument('cmd', ArgType.String, {required: true, description: 'command to execute'})
-    .addArgument('channel', ArgType.String, {required: true, description: 'channel id'})
-    .addArgument('interval', ArgType.Time, {required: true, description: 'delay between runs'})
-    .addArgument('cooldown', ArgType.Time, {default: 10, description: 'time to wait after a message was sent'})
-    .addArgument('filter', ArgType.Bool, {default: false, description: 'filter messages without attachments'})
-    
-
-    cmd.register('clear-interval', bot.clearInterval.bind(bot), {
-      description: 'clear interval'
-    })
-    .addArgument('i', ArgType.Number, {default: 0})
+  cmd.register('intervals', bot.listIntervals.bind(bot), {
+    description: 'list intervals'
+  })
 
 
-    cmd.register('intervals', bot.listIntervals.bind(bot), {
-      description: 'list intervals'
-    })
+  cmd.register('list', () => {
+    return { msg: 'Commands: \n'+cmd.listCommands()}
+  }, {
+    description: 'lists all commands'
+  })
 
 
-    cmd.register('list', () => {
-      return { msg: 'Commands: \n'+cmd.listCommands()}
-    }, {
-      description: 'lists all commands'
-    })
+  cmd.register('help', (name) => {
+    return { msg: cmd.help(name) }
+  }, {
+    description: 'prints more information of a command'
+  })
+  .addArgument('name', ArgType.String, {required: true})
 
 
-    cmd.register('help', (name) => {
-      return { msg: cmd.help(name) }
-    }, {
-      description: 'prints more information of a command'
-    })
-    .addArgument('name', ArgType.String, {required: true})
+  bot.on('message', (msg) => {
+    (function (msg){  
+      cmd.execute(msg.content).then((res) => {
+        let response = (res && res.msg) ? res.msg : null
+        let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
 
+        return bot.send(msg, response, attachment)
 
-    bot.on('message', (msg) => {
-      (function (msg){  
-        cmd.execute(msg.content).then((res) => {
-          let response = (res && res.msg) ? res.msg : null
-          let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
-
-          return bot.send(msg, response, attachment)
-
-        }).catch((err) => {
-          console.log(err.toString(), err.stack)
-          return bot.send(msg, err.toString())
-        })
-      })(msg)
-    })
+      }).catch((err) => {
+        console.log(err.toString(), err.stack)
+        return bot.send(msg, err.toString())
+      })
+    })(msg)
   })
 }
 
@@ -433,5 +434,4 @@ if (require.main === module) {
 
 module.exports = { 
   ReolinkBot,
-  initReolinkBot,
 }

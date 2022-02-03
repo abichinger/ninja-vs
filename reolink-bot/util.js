@@ -1,7 +1,6 @@
 const EventEmitter = require('events');
 const ffmpeg = require('fluent-ffmpeg')
 const cv = require("@u4/opencv4nodejs");
-const { readNetFromONNX } = require('@u4/opencv4nodejs');
 
 const classNames = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
   'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
