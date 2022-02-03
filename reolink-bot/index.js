@@ -5,7 +5,6 @@ const reocgi = require('reolink-cgi')
 const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
 const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection } = require('./util')
-const tmpDir = './.tmp';
 const { CommandHandler, ArgType } = require('./cmd')
 const crypto = require("crypto");
 
@@ -30,10 +29,10 @@ class ReolinkBot extends EventEmitter {
     this.discord.login(process.env.RLB_DISCORD_TOKEN)
   }
 
-  getVC(size, delay){
+  getVC(size){
     if (!this.vc) {
       let rtsp = this.client.rtspMain()
-      this.vc = new VideoCapture(rtsp, delay, size) //TODO: fix delay and size
+      this.vc = new VideoCapture(rtsp, size)
     }
     return this.vc
   }
@@ -161,9 +160,8 @@ class ReolinkBot extends EventEmitter {
     let images = []
     let size = [capWidth, capHeight]
     try {
-      await this.getVC(size, capDelay).capture(2, (frame) => {
-        images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
-      })
+      let vc = this.getVC(size)
+      images = await vc.capture(2, capDelay)
     } catch(err) {
       console.log(err)
       return
@@ -222,11 +220,9 @@ class ReolinkBot extends EventEmitter {
 
     let images = []
     let size = [capWidth, capHeight]   
-    let delay = capDelay
     try {
-      await this.getVC(size, delay).capture(2, (frame) => {
-        images.push(new cv.Mat(Buffer.from(frame), size[1], size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB))
-      })
+      let vc = this.getVC(size)
+      images = await vc.capture(2, capDelay)
     } catch(err) {
       console.log(err)
       return

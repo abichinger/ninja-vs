@@ -15,10 +15,9 @@ const classNames = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
 
 class VideoCapture extends EventEmitter {
 
-  constructor(input, delay, size, timeout=10000) {
+  constructor(input, size, timeout=10000) {
     super()
     this.input = input
-    this.fps = parseInt(1000/delay)
     this.size = size
     this.frameSize = size[0]*size[1]*3
     this.curSize = 0
@@ -45,7 +44,6 @@ class VideoCapture extends EventEmitter {
 
   open(){
     this.command  = ffmpeg(this.input)
-    .addOutputOption(`-vf fps=${this.fps}`)
     .addOutputOption(`-s ${this.size[0]}x${this.size[1]}`)
     .addOutputOption(`-f image2pipe`)
     .addOutputOption(`-vcodec rawvideo`)
@@ -89,7 +87,17 @@ class VideoCapture extends EventEmitter {
     })
   }
 
-  capture(frames, cb) {
+  async capture(frames, delay=0) {
+    let images = []
+    for(let i = 0; i< frames; i++){
+      let img = await this.read()
+      images.push(img)
+      await sleep(delay)
+    }
+    return images
+  }
+
+  read() {
     if(this.tId) {
       clearTimeout(this.tId)
     }
@@ -103,14 +111,11 @@ class VideoCapture extends EventEmitter {
 
     return new Promise((resolve, reject) => {
 
-      let i = 0
       let onFrame = function(frame) {
-        cb(frame, i++)
-        if(i == frames){
-          this.off('frame', onFrame)
-          this.off('close', reject)
-          resolve()
-        }
+        let img = new cv.Mat(Buffer.from(frame), this.size[1], this.size[0], cv.CV_8UC3).cvtColor(cv.COLOR_BGR2RGB)
+        this.off('frame', onFrame)
+        this.off('close', reject)
+        resolve(img)
       }
       
       this.on('close', reject)
@@ -261,6 +266,12 @@ function boxesIntersection(boxesA, boxesB) {
     }
   }
   return false
+}
+
+function sleep(ms){
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }
 
 module.exports = {
