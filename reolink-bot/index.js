@@ -28,9 +28,21 @@ class ReolinkBot extends EventEmitter {
     this.discord.login(process.env.RLB_DISCORD_TOKEN)
   }
 
-  getVC(size){
+  getVC(){
+
+    let getParam = (key) => {
+      if (process.env[key] !== undefined) {
+        let value = parseInt(process.env[key])
+        return !isNaN(value) ? value : undefined
+      }
+    }
+
+    let width = getParam("RLB_CAPTURE_WIDTH")
+    let height = getParam("RLB_CAPTURE_HEIGHT")
+    let fps = getParam("RLB_CAPTURE_FPS")
+     
     if (!this.vc) {
-      this.vc = new VideoCapture(this.input, size)
+      this.vc = new VideoCapture(this.input, width, height, fps)
     }
     return this.vc
   }
@@ -98,18 +110,17 @@ class ReolinkBot extends EventEmitter {
     
   }
 
-  async snap(capWidth, capHeight){
-    let size = [capWidth, capHeight]
+  async snap(){
     try {
-      let vc = this.getVC(size)
+      let vc = this.getVC()
       return (await vc.read())
     } catch(err) {
       console.log(err)
     }
   }
 
-  async snapWrapper(capWidth, capHeight){
-    let img = await this.snap(capWidth, capHeight)
+  async snapWrapper(){
+    let img = await this.snap()
     return {
       attachment: img !== undefined ? cv.imencode('.jpg', img) : null
     }
@@ -164,11 +175,10 @@ class ReolinkBot extends EventEmitter {
     return boxes
   }
 
-  async motionDetect(capWidth, capHeight, capDelay, ...options){
+  async motionDetect(capDelay, ...options){
     let images = []
-    let size = [capWidth, capHeight]
     try {
-      let vc = this.getVC(size)
+      let vc = this.getVC()
       images = await vc.capture(2, capDelay)
     } catch(err) {
       console.log(err)
@@ -224,13 +234,12 @@ class ReolinkBot extends EventEmitter {
   }
 
 
-  async smartDetect(intersect, capWidth, capHeight, capDelay, ...options){
+  async smartDetect(intersect, delay, ...options){
 
     let images = []
-    let size = [capWidth, capHeight]   
     try {
-      let vc = this.getVC(size)
-      images = await vc.capture(2, capDelay)
+      let vc = this.getVC()
+      images = await vc.capture(2, delay)
     } catch(err) {
       console.log(err)
       return
@@ -342,17 +351,13 @@ function main(){
   bot.initDiscord()
   let cmd = new CommandHandler('!')
 
-  let snapCmd = cmd.register('snap', bot.snapWrapper.bind(bot), {
+  cmd.register('snap', bot.snapWrapper.bind(bot), {
     description: 'takes a snapshot'
   })
-  .addArgument('width', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_WIDTH', 2560), description: 'capture width'})
-  .addArgument('height', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_HEIGHT', 1440), description: 'capture height'})
-
 
   let objectCmd = cmd.register('objects', bot.detectObjects.bind(bot), {
     description: 'object detection'
   })
-  .appendArguments(snapCmd)
   .addArgument('exclude', ArgType.List, {default: getOption(process.env, 'RLB_OBJECT_EXCLUDE', []), description: "a list of classes to exclude (e.g.: 'airplane, traffic light')"})
   .addArgument('confidence', ArgType.Float, {default: getOption(process.env, 'RLB_OBJECT_CONFIDENCE', 0.6), description: "confidence threshold"})
 
@@ -360,8 +365,7 @@ function main(){
   let motionCmd = cmd.register('motion', bot.motionDetect.bind(bot), {
     description: 'motion detection'
   })
-  .appendArguments(snapCmd)
-  .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'RLB_CAPTURE_DELAY', 100), description: 'delay in ms between images'})
+  .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_DELAY', 100), description: 'delay in ms between images'})
   .addArgument('area', ArgType.Float, {default: getOption(process.env, 'RLB_MOTION_AREA', 0.001), description: 'min size of motion in percent'})
   .addArgument('thresh', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_THRESHOLD', 20), description: 'threshold value between 0-255'})
   .addArgument('blur', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_BLUR', 11), description: 'kernel size of gaussian blur, must be odd'})
@@ -373,7 +377,7 @@ function main(){
   })
   .addArgument('intersect', ArgType.Bool, {default: true, description: 'whether the boxes of motion and object detection have to overlap'})
   .appendArguments(motionCmd)
-  .appendArguments(objectCmd, ['width', 'height'])
+  .appendArguments(objectCmd)
 
 
   cmd.register('set-interval', bot.setInterval.bind(bot), {

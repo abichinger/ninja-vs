@@ -14,11 +14,12 @@ const classNames = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
 
 class VideoCapture extends EventEmitter {
 
-  constructor(input, size, timeout=10000) {
+  constructor(input, width=1920, height=1080, fps=15, timeout=10000) {
     super()
     this.input = input
-    this.size = size
-    this.frameSize = size[0]*size[1]*3
+    this.size = [width, height]
+    this.fps = fps
+    this.frameSize = width*height*3
     this.curSize = 0
     this.timeout = timeout
 
@@ -43,6 +44,7 @@ class VideoCapture extends EventEmitter {
 
   open(){
     this.command  = ffmpeg(this.input)
+    .addOutputOption(`-vf fps=${this.fps}`)
     .addOutputOption(`-s ${this.size[0]}x${this.size[1]}`)
     .addOutputOption(`-f image2pipe`)
     .addOutputOption(`-vcodec rawvideo`)
