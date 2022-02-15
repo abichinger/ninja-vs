@@ -4,3 +4,8 @@ services:
     env_file:
     - reolink-bot/.env
     restart: always
+    logging:
+        driver: "json-file"
+        options:
+            max-file: "5"
+            max-size: "10m"

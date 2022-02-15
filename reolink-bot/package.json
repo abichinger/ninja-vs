@@ -15,10 +15,11 @@
     "do-install": "build-opencv build"
   },
   "dependencies": {
-    "@u4/opencv4nodejs": "https://github.com/abichinger/opencv4nodejs#master",
+    "@u4/opencv4nodejs": "^6.1.1",
     "discord.js": "^12.2.0",
     "dotenv": "^8.2.0",
-    "fluent-ffmpeg": "^2.1.2"
+    "fluent-ffmpeg": "^2.1.2",
+    "node-persist": "^3.1.0"
   },
   "devDependencies": {
     "eslint": "^7.2.0",

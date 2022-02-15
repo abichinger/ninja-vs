@@ -5,14 +5,121 @@ const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
 const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection } = require('./util')
 const { CommandHandler, ArgType } = require('./cmd')
-const crypto = require("crypto");
+const storage = require('node-persist');
+
+class IntervalMessage {
+
+  constructor(msg, channelId, interval, cooldown=0, filter=false){
+    this.msg = msg
+    this.channelId = channelId
+    this.interval = interval
+    this.cooldown = cooldown
+    this.filter = filter
+    this.timeout = null
+
+    this.bot = null
+
+    this.startTS = null
+    this.lastAttachmentTS = null
+
+    this.intervalMsg = {
+      content: this.msg,
+      channel: {
+        send: this.send.bind(this)
+      },
+      setTimeout: () => {
+        if(!this.bot){
+          return
+        }
+
+        let timeout = this.ms()
+
+        if(timeout < 0){
+          //console.log('can\'t keep up')
+          timeout = 0
+        }
+
+        this.timeout = setTimeout(this.fn, timeout)
+      }
+    }
+
+    this.fn = () => {
+      this.startTS = new Date().getTime()
+      this.bot.emit('message', this.intervalMsg)
+    }
+  }
+
+  ms() {
+    let endTS = new Date().getTime()
+    let execTime = endTS - this.startTS
+    let cd = this.cooldown*1000 - (endTS - (this.lastAttachmentTS ? this.lastAttachmentTS : 0))
+    let timeout = this.interval*1000 + (cd > 0 ? cd : 0) - execTime
+    return parseInt(timeout)
+  }
+
+  async send(message, attachment) {
+
+    //save timestamp of last attachment
+    if(attachment){
+      this.lastAttachment = new Date().getTime()
+    }
+
+    //filter messages without attachment
+    if(this.filter && !attachment){
+      return
+    }
+
+    //send message
+    let ch = this.bot.discord.channels.cache.get(this.channelId) || (await this.bot.discord.channels.fetch(this.channelId))
+    return ch.send(message, attachment)
+  }
+
+  /**
+   * 
+   * @param {ReolinkBot} bot 
+   */
+  start(bot){
+    this.bot = bot
+    this.timeout = setTimeout(this.fn, 0)
+  }
+
+  stop(){
+    this.bot = null
+    clearTimeout(this.timeout)
+  }
+
+  toJSON(){
+    let params = {
+      msg: this.msg,
+      channelId: this.channelId,
+      interval: this.interval,
+      cooldown: this.cooldown,
+      filter: this.filter
+    }
+    return params
+  }
+
+  toString(){
+    return JSON.stringify(this.toJSON())
+  }
+
+  /**
+   * 
+   * @param {string} json 
+   */
+  static fromObject(params){
+    //let params = JSON.parse(json)
+    return new IntervalMessage(params.msg, params.channelId, params.interval, params.cooldown, params.filter)
+  }
+
+}
 
 class ReolinkBot extends EventEmitter {
 
   constructor(input){
     super()
     this.discord = new Client()
-    this.intervals = new Map()
+    this.intervals = []
     this.input = input
   }
 
@@ -90,8 +197,8 @@ class ReolinkBot extends EventEmitter {
     return res
   }
 
-  async detectObjects(capWidth, capHeight, ...options) {
-    let img = await this.snap(capWidth, capHeight)
+  async detectObjects(...options) {
+    let img = await this.snap()
     if (img === undefined) return
 
     let { classNames, confidences } = await this.objects(img, true, ...options)
@@ -258,78 +365,34 @@ class ReolinkBot extends EventEmitter {
   }
 
   async setInterval(cmd, channel, interval, cooldown=0, filter=false){
-    
-    ((cmd, channel, interval, cooldown, filter) => {
-
-      let start = null
-      let id = crypto.randomBytes(16).toString('base64')
-      let intervalObj = {cmd, channel, interval, cooldown, timeoutId: null}
-      let lastAttachment = null
-
-      let fn = () => {
-        start = new Date().getTime()
-        this.emit('message', msg)
-      }
-
-      let msg = {
-        content: cmd,
-        channel: {
-          send: async (message, attachment) => {
-
-            //save timestamp of last attachment
-            if(attachment){
-              lastAttachment = new Date().getTime()
-            }
-
-            //filter messages without attachment
-            if(filter && !attachment){
-              return
-            }
-
-            //send message
-            let ch = this.discord.channels.cache.get(channel) || (await this.discord.channels.fetch(channel))
-            return ch.send(message, attachment)
-          }
-        },
-        setTimeout: () => {
-          if(!this.intervals.has(id)){
-            return
-          }
-
-          let end = new Date().getTime()
-          let execTime = end - start
-          let cd = cooldown*1000 - (end - (lastAttachment ? lastAttachment : 0))
-          let timeout = interval*1000 + (cd > 0 ? cd : 0) - execTime
-
-          if(timeout < 0){
-            //console.log('can\'t keep up')
-            timeout = 0
-          }
-
-          intervalObj.timeoutId = setTimeout(fn, parseInt(timeout))
-        }
-      }
-  
-      intervalObj.timeoutId = setTimeout(fn, 0)
-      this.intervals.set(id, intervalObj)
-
-    })(cmd, channel, interval, cooldown, filter)
+    let imsg = new IntervalMessage(cmd, channel, interval, cooldown, filter)
+    imsg.start(this)
+    this.intervals.push(imsg)
+    this.saveIntervals()
   }
 
   async clearInterval(index){
-    let id = Array.from(this.intervals.keys())[index]
-    if(id && this.intervals.has(id)){
-      let timeoutId = this.intervals.get(id).timeoutId
-      if(timeoutId) {
-        clearTimeout(timeoutId)
-      }
-      this.intervals.delete(id)
+    let imsg = this.intervals.splice(index, 1)[0]
+    imsg.stop()
+    this.saveIntervals()
+  }
+
+  async saveIntervals() {
+    await storage.setItem('intervals', this.intervals)
+  }
+
+  async loadIntervals() {
+    let intervals = await storage.getItem('intervals') || []
+    for(let params of intervals) {
+      let imsg = IntervalMessage.fromObject(params)
+      imsg.start(this)
+      this.intervals.push(imsg)
     }
   }
 
   async listIntervals(){
     return {
-      msg: (this.intervals.size > 0) ? Array.from(this.intervals.values()).map((int, i) => `${i}: ${int.cmd}, ${int.channel}, ${int.interval}s`).join('\n') : 'no intervals'
+      msg: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.toString()}`).join('\n') : 'no intervals'
     }
   }
 
@@ -344,11 +407,15 @@ class ReolinkBot extends EventEmitter {
 
 }
 
-function main(){
+async function main(){
+  await storage.init({
+    dir: getOption(process.env, 'RLB_STORAGE', 'storage')
+  })
 
   let bot = new ReolinkBot(process.env.RLB_INPUT)
     
   bot.initDiscord()
+  await bot.loadIntervals()
   let cmd = new CommandHandler('!')
 
   cmd.register('snap', bot.snapWrapper.bind(bot), {
@@ -417,7 +484,7 @@ function main(){
 
 
   bot.on('message', (msg) => {
-    (function (msg){  
+    (function (msg){ 
       cmd.execute(msg.content).then((res) => {
         let response = (res && res.msg) ? res.msg : null
         let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
@@ -433,7 +500,7 @@ function main(){
 }
 
 if (require.main === module) {
-  main();
+  main().then(() => {})
 }
 
 module.exports = { 
