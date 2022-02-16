@@ -1,25 +1,60 @@
-# Reolink Discord Bot
+# NinjaVS
 
-A Discord Bot with object detection for Reolink CCTV cameras.
+A Discord bot with object and motion detection for CCTV cameras.
 
-# Requirements
+# Features
+- Snapshot support
+- Motion detection 
+- Object detection
+- Combined motion and object detection
+- CLI Interface
 
-- OpenCV 3 or 4
+# CLI Interface
+
+- `!list` - lists all available commands
+- `!help motion` - usage information of the `motion` command
+
+# Install using Docker
+
+Clone the repository
+```
+git pull https://github.com/abichinger/ninja-vs.git
+cd ninja-vs
+```
+
+Create `.env` file with the following variables
+```ini
+NVS_INPUT=rtsp://username:password@host
+NVS_DISCORD_TOKEN=your_discord_token
+NVS_ONNX_FILE=dnn/yolov5s.onnx
+NVS_CAPTURE_WIDTH=2560
+NVS_CAPTURE_HEIGHT=1440
+NVS_CAPTURE_FPS=10
+```
+
+Build and start the docker container
+```
+docker-compose build
+docker-compose up -d
+```
+
+# Manual Installation
+
+## Requirements
+
 - ffmpeg
+- cmake
+
+...
+
+# Environment Variables
+
+...
 
 # Development
 
-Create `.env` file inside `./reolink-bot` with the following variables
-```
-RLB_REOLINK_HOST=...
-RLB_REOLINK_USER=...
-RLB_REOLINK_PASSWORD=...
-RLB_DISCORD_TOKEN=...
-RLB_ONNX_FILE=...
-```
+...
 
-Install dependencies and start the bot.
-```
-yarn install
-yarn start
-```
+# Alternatives
+
+- [Shinobi](https://shinobi.video/) 

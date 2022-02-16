@@ -8,10 +8,8 @@ RUN apt install -y \
     cmake
 
 COPY package.json yarn.lock /app/
-COPY reolink-bot/package.json reolink-bot/yarn.lock /app/reolink-bot/
-COPY reolink-cgi/package.json reolink-cgi/yarn.lock /app/reolink-cgi/
 
-WORKDIR /app/reolink-bot
+WORKDIR /app
 RUN yarn install
 
 RUN export OPENCV4NODEJS_AUTOBUILD_OPENCV_VERSION=4.5.4
@@ -19,5 +17,4 @@ RUN yarn build-opencv rebuild
 
 COPY . /app
 
-WORKDIR /app/reolink-bot
 ENTRYPOINT yarn start

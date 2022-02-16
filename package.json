@@ -1,7 +1,31 @@
 {
-    "private": true,
-    "workspaces": ["reolink-bot", "reolink-cgi"],
-    "scripts": {
-        "start": "cd reolink-bot && yarn start"
-    }
+  "name": "ninja-vs",
+  "version": "1.0.0",
+  "description": "A Discord Bot with object and motion detection for CCTV cameras.",
+  "main": "src/index.js",
+  "author": "Andreas Bichinger",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abichinger/ninja-vs"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest",
+    "do-install": "build-opencv build"
+  },
+  "dependencies": {
+    "@u4/opencv4nodejs": "^6.1.1",
+    "discord.js": "^12.2.0",
+    "dotenv": "^8.2.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "node-persist": "^3.1.0"
+  },
+  "devDependencies": {
+    "eslint": "^7.2.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-jest": "^25.7.0",
+    "jest": "^27.4.7"
+  }
 }

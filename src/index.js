@@ -76,7 +76,7 @@ class IntervalMessage {
 
   /**
    * 
-   * @param {ReolinkBot} bot 
+   * @param {NinjaVS} bot 
    */
   start(bot){
     this.bot = bot
@@ -114,7 +114,7 @@ class IntervalMessage {
 
 }
 
-class ReolinkBot extends EventEmitter {
+class NinjaVS extends EventEmitter {
 
   constructor(input){
     super()
@@ -132,7 +132,7 @@ class ReolinkBot extends EventEmitter {
       this.emit('message', msg)
     });
     
-    this.discord.login(process.env.RLB_DISCORD_TOKEN)
+    this.discord.login(process.env.NVS_DISCORD_TOKEN)
   }
 
   getVC(){
@@ -144,9 +144,9 @@ class ReolinkBot extends EventEmitter {
       }
     }
 
-    let width = getParam("RLB_CAPTURE_WIDTH")
-    let height = getParam("RLB_CAPTURE_HEIGHT")
-    let fps = getParam("RLB_CAPTURE_FPS")
+    let width = getParam("NVS_CAPTURE_WIDTH")
+    let height = getParam("NVS_CAPTURE_HEIGHT")
+    let fps = getParam("NVS_CAPTURE_FPS")
      
     if (!this.vc) {
       this.vc = new VideoCapture(this.input, width, height, fps)
@@ -161,7 +161,7 @@ class ReolinkBot extends EventEmitter {
    */
   async objects(img, drawRectangles, exclude, confidenceThreshold) {
     if(!this.net){
-      this.net = await cv.readNetFromONNX(process.env.RLB_ONNX_FILE || "dnn/yolov5s.onnx")
+      this.net = await cv.readNetFromONNX(process.env.NVS_ONNX_FILE || "dnn/yolov5s.onnx")
     }
 
     let net = this.net
@@ -409,10 +409,10 @@ class ReolinkBot extends EventEmitter {
 
 async function main(){
   await storage.init({
-    dir: getOption(process.env, 'RLB_STORAGE', 'storage')
+    dir: getOption(process.env, 'NVS_STORAGE', 'storage')
   })
 
-  let bot = new ReolinkBot(process.env.RLB_INPUT)
+  let bot = new NinjaVS(process.env.NVS_INPUT)
     
   bot.initDiscord()
   await bot.loadIntervals()
@@ -425,18 +425,18 @@ async function main(){
   let objectCmd = cmd.register('objects', bot.detectObjects.bind(bot), {
     description: 'object detection'
   })
-  .addArgument('exclude', ArgType.List, {default: getOption(process.env, 'RLB_OBJECT_EXCLUDE', []), description: "a list of classes to exclude (e.g.: 'airplane, traffic light')"})
-  .addArgument('confidence', ArgType.Float, {default: getOption(process.env, 'RLB_OBJECT_CONFIDENCE', 0.6), description: "confidence threshold"})
+  .addArgument('exclude', ArgType.List, {default: getOption(process.env, 'NVS_OBJECT_EXCLUDE', []), description: "a list of classes to exclude (e.g.: 'airplane, traffic light')"})
+  .addArgument('confidence', ArgType.Float, {default: getOption(process.env, 'NVS_OBJECT_CONFIDENCE', 0.6), description: "confidence threshold"})
 
 
   let motionCmd = cmd.register('motion', bot.motionDetect.bind(bot), {
     description: 'motion detection'
   })
-  .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_DELAY', 100), description: 'delay in ms between images'})
-  .addArgument('area', ArgType.Float, {default: getOption(process.env, 'RLB_MOTION_AREA', 0.001), description: 'min size of motion in percent'})
-  .addArgument('thresh', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_THRESHOLD', 20), description: 'threshold value between 0-255'})
-  .addArgument('blur', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_BLUR', 11), description: 'kernel size of gaussian blur, must be odd'})
-  .addArgument('pWidth', ArgType.Number, {default: getOption(process.env, 'RLB_MOTION_WIDTH', 1000), description: 'processing width'})
+  .addArgument('delay', ArgType.Number, {default: getOption(process.env, 'NVS_MOTION_DELAY', 100), description: 'delay in ms between images'})
+  .addArgument('area', ArgType.Float, {default: getOption(process.env, 'NVS_MOTION_AREA', 0.001), description: 'min size of motion in percent'})
+  .addArgument('thresh', ArgType.Number, {default: getOption(process.env, 'NVS_MOTION_THRESHOLD', 20), description: 'threshold value between 0-255'})
+  .addArgument('blur', ArgType.Number, {default: getOption(process.env, 'NVS_MOTION_BLUR', 11), description: 'kernel size of gaussian blur, must be odd'})
+  .addArgument('pWidth', ArgType.Number, {default: getOption(process.env, 'NVS_MOTION_WIDTH', 1000), description: 'processing width'})
 
 
   cmd.register('smart', bot.smartDetect.bind(bot), {
@@ -504,5 +504,5 @@ if (require.main === module) {
 }
 
 module.exports = { 
-  ReolinkBot,
+  NinjaVS,
 }

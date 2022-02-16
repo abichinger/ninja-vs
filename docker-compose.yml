@@ -1,8 +1,8 @@
 services:
-  reolink-bot:
+  ninja-vs:
     build: .
     env_file:
-    - reolink-bot/.env
+    - .env
     restart: always
     logging:
         driver: "json-file"
