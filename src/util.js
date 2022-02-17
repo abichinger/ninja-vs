@@ -275,6 +275,12 @@ function sleep(ms){
   })
 }
 
+function assertEV(name){
+  if(process.env[name] === undefined){
+    throw `environment variable ${name} is required`
+  }
+}
+
 module.exports = {
   VideoCapture,
   parseTime,
@@ -282,6 +288,7 @@ module.exports = {
   resizeToSquare,
   unwrapYOLOv5,
   getOption,
-  boxesIntersection
+  boxesIntersection,
+  assertEV
 }
   

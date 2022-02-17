@@ -1,5 +1,5 @@
 services:
-  ninja-vs:
+  bot:
     build: .
     env_file:
     - .env

@@ -3,9 +3,10 @@ dotenv.config()
 const {Client, MessageAttachment} = require('discord.js')
 const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
-const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection } = require('./util')
+const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection, assertEV } = require('./util')
 const { CommandHandler, ArgType } = require('./cmd')
-const storage = require('node-persist');
+const storage = require('node-persist')
+const fs = require('fs')
 
 class IntervalMessage {
 
@@ -116,23 +117,36 @@ class IntervalMessage {
 
 class NinjaVS extends EventEmitter {
 
-  constructor(input){
+  constructor(input, onnxPath){
     super()
     this.discord = new Client()
     this.intervals = []
     this.input = input
+    this.onnxPath = onnxPath
   }
 
-  initDiscord() {
-    this.discord.on('ready', () => {
-      console.log(`Logged in as ${this.discord.user.tag}!`)
-    });
+  login() {
+    return new Promise((resolve, reject) => {
+      this.discord.on('ready', () => {
+        console.log(`Logged in as ${this.discord.user.tag}!`)
+        resolve()
+      });
+  
+      this.discord.on('message', msg => {
+        this.emit('message', msg)
+      });
+      
+      try{
+        this.discord.login(process.env.NVS_DISCORD_TOKEN)
+      }
+      catch(err){
+        reject(err)
+      }
+    })
+  }
 
-    this.discord.on('message', msg => {
-      this.emit('message', msg)
-    });
-    
-    this.discord.login(process.env.NVS_DISCORD_TOKEN)
+  destroy() {
+    this.discord.destroy()
   }
 
   getVC(){
@@ -161,7 +175,7 @@ class NinjaVS extends EventEmitter {
    */
   async objects(img, drawRectangles, exclude, confidenceThreshold) {
     if(!this.net){
-      this.net = await cv.readNetFromONNX(process.env.NVS_ONNX_FILE || "dnn/yolov5s.onnx")
+      this.net = await cv.readNetFromONNX(this.onnxPath)
     }
 
     let net = this.net
@@ -407,16 +421,38 @@ class NinjaVS extends EventEmitter {
 
 }
 
+let bot;
+
 async function main(){
+
+  assertEV('NVS_INPUT')
+  assertEV('NVS_DISCORD_TOKEN')
+  assertEV('NVS_CAPTURE_WIDTH')
+  assertEV('NVS_CAPTURE_HEIGHT')
+  assertEV('NVS_CAPTURE_FPS')
+  assertEV('NVS_CHANNEL_ID')
+
+  let onnxPath = getOption(process.env, 'NVS_ONNX_FILE', "dnn/yolov5s.onnx")
+  if(!fs.existsSync(onnxPath)){
+    throw `${onnxPath} onnx model not found`
+  }
+
   await storage.init({
     dir: getOption(process.env, 'NVS_STORAGE', 'storage')
   })
 
-  let bot = new NinjaVS(process.env.NVS_INPUT)
+  bot = new NinjaVS(process.env.NVS_INPUT, onnxPath)
     
-  bot.initDiscord()
+  await bot.login()
   await bot.loadIntervals()
-  let cmd = new CommandHandler('!')
+
+  let channelId = getOption(process.env, 'NVS_CHANNEL_ID')
+  let channel = await bot.discord.channels.fetch(channelId)
+  if(channel.type !== 'text'){
+    throw `NVS_CHANNEL_ID must be a text channel`
+  }
+
+  let cmd = new CommandHandler(getOption(process.env, 'NVS_CMD_PREFIX', '!'))
 
   cmd.register('snap', bot.snapWrapper.bind(bot), {
     description: 'takes a snapshot'
@@ -451,7 +487,7 @@ async function main(){
     description: 'executes a command periodically'
   })
   .addArgument('cmd', ArgType.String, {required: true, description: 'command to execute'})
-  .addArgument('channel', ArgType.String, {required: true, description: 'channel id'})
+  .addArgument('channel', ArgType.String, {default: getOption(process.env, 'NVS_CHANNEL_ID', ''), description: 'channel id'})
   .addArgument('interval', ArgType.Time, {required: true, description: 'delay between runs'})
   .addArgument('cooldown', ArgType.Time, {default: 10, description: 'time to wait after a message was sent'})
   .addArgument('filter', ArgType.Bool, {default: false, description: 'filter messages without attachments'})
@@ -500,7 +536,12 @@ async function main(){
 }
 
 if (require.main === module) {
-  main().then(() => {})
+  main()
+  .then(() => {})
+  .catch((err) => {
+    if (bot) bot.destroy()
+    console.error(err)
+  })
 }
 
 module.exports = { 
