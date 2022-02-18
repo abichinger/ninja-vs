@@ -4,8 +4,13 @@ services:
     env_file:
     - .env
     restart: always
+    volumes:
+      - storage:/app/storage
     logging:
         driver: "json-file"
         options:
             max-file: "5"
             max-size: "10m"
+
+volumes:
+  storage:
