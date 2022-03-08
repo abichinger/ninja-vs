@@ -24,7 +24,10 @@ git pull https://github.com/abichinger/ninja-vs.git
 cd ninja-vs
 ```
 
-Next you need to create a discord [application](https://discord.com/developers/applications) in order to aquire an api token.
+**Setup a discord bot**: 
+1. Create a new discord [application](https://discord.com/developers/applications) and copy the application id
+2. Add a bot to your application and note the api token
+3. Replace `app_id` with your applicaton id and enter it into your browser: https://discord.com/api/oauth2/authorize?client_id=app_id&permissions=52224&scope=bot
 
 Create `.env` file with all the required variables ([full list of environment varaibles](#environment-variables)).
 ```ini

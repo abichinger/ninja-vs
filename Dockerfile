@@ -13,7 +13,7 @@ WORKDIR /app
 RUN yarn install
 
 RUN export OPENCV4NODEJS_AUTOBUILD_OPENCV_VERSION=4.5.4
-RUN yarn build-opencv rebuild
+RUN yarn rebuild
 
 COPY . /app
 

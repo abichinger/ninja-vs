@@ -1,12 +1,13 @@
 const dotenv = require('dotenv')
 dotenv.config()
-const {Client, MessageAttachment} = require('discord.js')
+const {Client, Intents, MessageButton} = require('discord.js')
 const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
 const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection, assertEV } = require('./util')
 const { CommandHandler, ArgType } = require('./cmd')
 const storage = require('node-persist')
-const fs = require('fs')
+const fs = require('fs');
+const { PageCollection, CallFunction } = require('./interaction');
 
 class IntervalMessage {
 
@@ -28,25 +29,11 @@ class IntervalMessage {
       channel: {
         send: this.send.bind(this)
       },
-      setTimeout: () => {
-        if(!this.bot){
-          return
-        }
-
-        let timeout = this.ms()
-
-        if(timeout < 0){
-          //console.log('can\'t keep up')
-          timeout = 0
-        }
-
-        this.timeout = setTimeout(this.fn, timeout)
-      }
     }
 
     this.fn = () => {
       this.startTS = new Date().getTime()
-      this.bot.emit('message', this.intervalMsg)
+      this.bot.emit('messageCreate', this.intervalMsg)
     }
   }
 
@@ -72,7 +59,18 @@ class IntervalMessage {
 
     //send message
     let ch = this.bot.discord.channels.cache.get(this.channelId) || (await this.bot.discord.channels.fetch(this.channelId))
-    return ch.send(message, attachment)
+    ch.send(message, attachment)
+
+    //reset timeout
+    if(!this.bot) return
+
+    let timeout = this.ms()
+
+    if(timeout < 0){
+      timeout = 0
+    }
+
+    this.timeout = setTimeout(this.fn, timeout)
   }
 
   /**
@@ -119,7 +117,7 @@ class NinjaVS extends EventEmitter {
 
   constructor(input, onnxPath){
     super()
-    this.discord = new Client()
+    this.discord = new Client({intents: [Intents.FLAGS.GUILD_MESSAGES]})
     this.intervals = []
     this.input = input
     this.onnxPath = onnxPath
@@ -132,8 +130,8 @@ class NinjaVS extends EventEmitter {
         resolve()
       });
   
-      this.discord.on('message', msg => {
-        this.emit('message', msg)
+      this.discord.on('messageCreate', msg => {
+        this.emit('messageCreate', msg)
       });
       
       try{
@@ -219,13 +217,13 @@ class NinjaVS extends EventEmitter {
 
     if(classNames.length > 0) {
       return {
-        msg: classNames.map((name, i) => `${name}(${confidences[i]})`).join(', '),
-        attachment: cv.imencode('.jpg', img)
+        content: classNames.map((name, i) => `${name}(${confidences[i]})`).join(', '),
+        files: [{attachment: cv.imencode('.jpg', img)}]
       }
     }
     else {
       return {
-        msg: "no objects detected",
+        content: "no objects detected",
       }
     }
     
@@ -242,8 +240,9 @@ class NinjaVS extends EventEmitter {
 
   async snapWrapper(){
     let img = await this.snap()
+    if (img === undefined) return {content: 'sorry, something went wrong'}
     return {
-      attachment: img !== undefined ? cv.imencode('.jpg', img) : null
+      files: [{attachment: cv.imencode('.jpg', img)}]
     }
   }
 
@@ -310,13 +309,13 @@ class NinjaVS extends EventEmitter {
 
     if (boxes.length > 0) {
       return {
-        msg: "motion detected",
-        attachment: cv.imencode('.jpg', images[1])
+        content: "motion detected",
+        files: [{attachment: cv.imencode('.jpg', images[1])}]
       }
     }
     else {
       return {
-        msg: "no motion detected",
+        content: "no motion detected",
       }
     }
   }
@@ -373,8 +372,8 @@ class NinjaVS extends EventEmitter {
     }
 
     return {
-      msg: classNames.map((name, i) => `${name}(${confidences[i]})`).join(', '),
-      attachment: cv.imencode('.jpg', images[1])
+      content: classNames.map((name, i) => `${name}(${confidences[i]})`).join(', '),
+      files: [{attachment: cv.imencode('.jpg', images[1])}]
     }
   }
 
@@ -406,17 +405,15 @@ class NinjaVS extends EventEmitter {
 
   async listIntervals(){
     return {
-      msg: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.toString()}`).join('\n') : 'no intervals'
+      content: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.toString()}`).join('\n') : 'no intervals'
     }
   }
 
-  async send(msg, response, attachment) {
-    if(response !== null || attachment !== null){
-      await msg.channel.send(response, attachment)
-    }
-    if(msg.setTimeout){
-      msg.setTimeout()
-    }
+  async send(req, res) {
+    let channel = req ? req.channel
+      : this.bot.discord.channels.cache.get(this.channelId) || (await this.bot.discord.channels.fetch(this.channelId))
+    
+    await channel.send(res)
   }
 
 }
@@ -444,11 +441,10 @@ async function main(){
   bot = new NinjaVS(process.env.NVS_INPUT, onnxPath)
     
   await bot.login()
-  await bot.loadIntervals()
 
   let channelId = getOption(process.env, 'NVS_CHANNEL_ID')
   let channel = await bot.discord.channels.fetch(channelId)
-  if(channel.type !== 'text'){
+  if(channel.type !== 'GUILD_TEXT'){
     throw `NVS_CHANNEL_ID must be a text channel`
   }
 
@@ -505,34 +501,61 @@ async function main(){
 
 
   cmd.register('list', () => {
-    return { msg: 'Commands: \n'+cmd.listCommands()}
+    return { content: 'Commands: \n'+cmd.listCommands()}
   }, {
     description: 'lists all commands'
   })
 
 
   cmd.register('help', (name) => {
-    return { msg: cmd.help(name) }
+    return { content: cmd.help(name) }
   }, {
     description: 'prints more information of a command'
   })
   .addArgument('name', ArgType.String, {required: true})
 
 
-  bot.on('message', (msg) => {
+
+
+  let pages = new PageCollection('home', [new MessageButton({
+    customId: 'back',
+    label: 'Back',
+    style: 'SECONDARY'
+  })])
+  pages.addPage('home', 'Welcome to NinjaVS!')
+  .addButton({
+    customId: 'snap',
+    //label: 'Snap',
+    emoji: '📸',
+    style: 'SECONDARY'
+  }, new CallFunction(bot.snapWrapper.bind(bot)))
+
+  cmd.register('ninja', () => {
+    return pages.goHome()
+  }, {
+    description: 'opens the interactive interface'
+  })
+
+  bot.discord.on('interactionCreate', async interaction => {
+    if(!interaction.isButton()) return
+    interaction.reply('Processing...')
+    let res = await pages.execute(interaction.customId)
+    return bot.send(interaction, res)
+  });
+
+  bot.on('messageCreate', (msg) => {
     (function (msg){ 
       cmd.execute(msg.content).then((res) => {
-        let response = (res && res.msg) ? res.msg : null
-        let attachment = (res && res.attachment) ? new MessageAttachment(res.attachment) : null
-
-        return bot.send(msg, response, attachment)
-
+        if(!res) return
+        return bot.send(msg, res)
       }).catch((err) => {
         console.log(err.toString(), err.stack)
         return bot.send(msg, err.toString())
       })
     })(msg)
   })
+
+  await bot.loadIntervals()
 }
 
 if (require.main === module) {
