@@ -5,10 +5,14 @@ const { NinjaVS } = require("..");
 const motionOptions = [0.001, 20, 11, 640]
 const objectOptions = [[], 0.7]
 
+function nvs() {
+    return new NinjaVS("", "dnn/yolov5s.onnx")
+}
+
 describe('motionDetection', () => {
     test('little motion', async () => {
         
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let images = [
             cv.imread('test/frames/little-motion-1.jpg'), 
@@ -23,7 +27,7 @@ describe('motionDetection', () => {
 
     test('motion', async () => {
         
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let images = [
             cv.imread('test/frames/motion-1.jpg'), 
@@ -37,7 +41,7 @@ describe('motionDetection', () => {
 
     test('no motion', async () => {
         
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let images = [
             cv.imread('test/frames/motion-1.jpg'), 
@@ -53,7 +57,7 @@ describe('motionDetection', () => {
 describe('objectDetection', () => {
     test('test dog', async () => {
         
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let img = cv.imread('test/frames/dog.jpg')
         let {classNames} = await bot.objects(img, true, ...objectOptions)
@@ -64,7 +68,7 @@ describe('objectDetection', () => {
 
     test('test car', async () => {
         
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let img = cv.imread('test/frames/car.jpg')
         let {classNames} = await bot.objects(img, true, ...objectOptions)
@@ -76,7 +80,7 @@ describe('objectDetection', () => {
 
 describe('combinedDetection', () => {
     test('basic', async () => {
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let images = [
             cv.imread('test/frames/motion-1.jpg'), 
@@ -89,7 +93,7 @@ describe('combinedDetection', () => {
     });
 
     test('toggle intersection', async () => {
-        let bot = new NinjaVS()
+        let bot = nvs()
 
         let images = [
             cv.imread('test/frames/car-error.jpg'), 

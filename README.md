@@ -77,7 +77,20 @@ docker-compose up -d
 
 # Development
 
-...
+```bash
+# Install dependencies
+npm install
+
+# Build opencv
+npm run build-opencv
+
+# Run tests
+npm run test
+
+# Run NinjaVS
+npm run start
+
+```
 
 # Attribution
 

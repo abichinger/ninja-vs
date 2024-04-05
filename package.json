@@ -13,10 +13,10 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "jest",
-    "rebuild": "npx crlf --set=LF node_modules/.bin/build-opencv && yarn build-opencv rebuild"
+    "build-opencv": "export OPENCV4NODEJS_AUTOBUILD_OPENCV_VERSION=4.5.4 && npx build-opencv rebuild"
   },
   "dependencies": {
-    "@u4/opencv4nodejs": "^6.1.1",
+    "@u4/opencv4nodejs": "^6.5.3",
     "discord.js": "^13.6.0",
     "dotenv": "^8.2.0",
     "fluent-ffmpeg": "^2.1.2",

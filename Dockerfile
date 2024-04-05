@@ -1,4 +1,6 @@
-from node:16-bullseye
+# syntax=docker/dockerfile:1.7-labs
+
+from node:21-bookworm
 
 RUN apt update
 RUN apt install -y \
@@ -7,14 +9,14 @@ RUN apt install -y \
     build-essential \
     cmake
 
-COPY package.json yarn.lock /app/
+COPY package.json package-lock.json /app/
 
 WORKDIR /app
-RUN yarn install
+RUN npm install
 
 RUN export OPENCV4NODEJS_AUTOBUILD_OPENCV_VERSION=4.5.4
-RUN yarn rebuild
+RUN npm run build-opencv
 
-COPY . /app
+COPY --exclude=./node_modules/* . /app
 
 ENTRYPOINT yarn start
