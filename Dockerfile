@@ -14,7 +14,7 @@ COPY package.json package-lock.json /app/
 WORKDIR /app
 RUN npm install
 
-RUN export OPENCV4NODEJS_AUTOBUILD_OPENCV_VERSION=4.5.4
+RUN export OPENCV4NODEJS_AUTOBUILD_OPENCV_VERSION=4.9.0
 RUN npm run build-opencv
 
 COPY --exclude=./node_modules/* . /app
