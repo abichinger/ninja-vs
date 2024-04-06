@@ -51,8 +51,9 @@ docker-compose up -d
 
 - ffmpeg
 - cmake
+- build-essential
 
-...
+TODO
 
 # Environment Variables
 
@@ -94,7 +95,7 @@ npm run start
 
 # Attribution
 
-[yolov5-opencv-cpp-python](https://github.com/doleron/yolov5-opencv-cpp-python/) - origin of onnx model
+[ultralytics/yolov5](https://github.com/ultralytics/yolov5) - origin of onnx model
 
 # Alternatives
 
