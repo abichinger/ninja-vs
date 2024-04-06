@@ -1,12 +1,12 @@
 const cv = require("@u4/opencv4nodejs")
-const { NinjaVS } = require("..");
+const { NinjaVS, CooldownInterval } = require("..");
 
 //area, thresh, blur, width
 const motionOptions = [0.001, 20, 11, 640]
 const objectOptions = [[], 0.7]
 
 function nvs() {
-    return new NinjaVS("", "dnn/yolov5s.onnx")
+    return new NinjaVS("", "dnn/yolov5s6.onnx")
 }
 
 describe('motionDetection', () => {
@@ -109,4 +109,29 @@ describe('combinedDetection', () => {
         let {classNames:classNames2} = await bot.smart(images, drawRectangles, intersect, ...motionOptions, ...objectOptions)
         expect(classNames2.length).toBe(0)
     });
+})
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+describe("CooldownInterval", () => {
+    test("cooldown", async () => {
+        let counter = 1;
+        const i = new CooldownInterval(0.01, 0.02, async () => {
+            counter++
+            return counter % 3 === 0;
+        })
+
+        i.start()
+        await sleep(5);
+        for(let j = 2; j < 10; j++) {
+            expect(counter).toBe(j)
+            if (counter % 3 === 0) {
+                await sleep(10)
+            }
+            await sleep(10)
+        }
+        i.stop()
+    })
 })

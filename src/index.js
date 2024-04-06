@@ -1,6 +1,6 @@
 const dotenv = require('dotenv')
 dotenv.config()
-const {Client, Intents, MessageButton} = require('discord.js')
+const {Client, Intents, MessageButton, Message} = require('discord.js')
 const EventEmitter = require('events');
 const cv = require("@u4/opencv4nodejs")
 const { VideoCapture, resizeToSquare, unwrapYOLOv5, getOption, boxesIntersection, assertEV } = require('./util')
@@ -9,91 +9,90 @@ const storage = require('node-persist')
 const fs = require('fs');
 const { PageCollection, CallFunction } = require('./interaction');
 
-class IntervalMessage {
-
-  constructor(msg, channelId, interval, cooldown=0, filter=false){
-    this.msg = msg
-    this.channelId = channelId
+class CooldownInterval {
+  
+  /**
+   * 
+   * @param {number} interval 
+   * @param {number} cooldown 
+   * @param {() => Promise<boolean>} callback 
+   */
+  constructor(interval, cooldown, callback) {
     this.interval = interval
     this.cooldown = cooldown
-    this.filter = filter
-    this.timeout = null
+    this.callback = callback
+    this._enabled = false;
+  }
 
-    this.bot = null
-
-    this.startTS = null
-    this.lastAttachmentTS = null
-
-    this.intervalMsg = {
-      content: this.msg,
-      channel: {
-        send: this.send.bind(this)
-      },
-    }
-
-    this.fn = () => {
-      this.startTS = new Date().getTime()
-      this.bot.emit('messageCreate', this.intervalMsg)
+  async _run() {
+    const now = new Date();
+    const shouldCooldown = await this.callback()
+    const nextTimeout = this._calculateTimeout(now, shouldCooldown)
+    
+    if(this._enabled) {
+      setTimeout(this._run.bind(this), nextTimeout > 0 ? nextTimeout : 0)
     }
   }
 
-  ms() {
-    let endTS = new Date().getTime()
-    let execTime = endTS - this.startTS
-    let cd = this.cooldown*1000 - (endTS - (this.lastAttachmentTS ? this.lastAttachmentTS : 0))
-    let timeout = this.interval*1000 + (cd > 0 ? cd : 0) - execTime
+  /**
+   * 
+   * @param {Date} start 
+   * @param {boolean} shouldCooldown 
+   * @returns
+   */
+  _calculateTimeout(start, shouldCooldown) {
+    const now = new Date()
+    const execTime = now.getTime() - start.getTime()
+    let timeout = (shouldCooldown ? this.cooldown : this.interval) * 1000 - execTime
     return parseInt(timeout)
   }
 
-  async send(message, attachment) {
+  start(){
+    this._enabled = true;
+    setTimeout(this._run.bind(this), 0)
+  }
 
-    //save timestamp of last attachment
-    if(attachment){
-      this.lastAttachment = new Date().getTime()
-    }
+  stop(){
+    this._enabled = false;
+  }
 
-    //filter messages without attachment
-    if(this.filter && !attachment){
-      return
-    }
+}
 
-    //send message
-    let ch = this.bot.discord.channels.cache.get(this.channelId) || (await this.bot.discord.channels.fetch(this.channelId))
-    ch.send(message, attachment)
+class IntervalMessage {
 
-    //reset timeout
-    if(!this.bot) return
-
-    let timeout = this.ms()
-
-    if(timeout < 0){
-      timeout = 0
-    }
-
-    this.timeout = setTimeout(this.fn, timeout)
+  /**
+   * @param {string} msg 
+   * @param {string} channelId 
+   * @param {number} interval 
+   * @param {number} cooldown 
+   * @param {(msg: string, channelId: string) => Promise<boolean>} send 
+   */
+  constructor(msg, channelId, interval, cooldown, send){
+    this.msg = msg
+    this.channelId = channelId
+    this.interval = new CooldownInterval(interval, cooldown, async () => {
+      return await send(msg, channelId)
+    })
   }
 
   /**
    * 
    * @param {NinjaVS} bot 
    */
-  start(bot){
-    this.bot = bot
-    this.timeout = setTimeout(this.fn, 0)
+  start(){
+    this.interval.start()
   }
 
   stop(){
-    this.bot = null
-    clearTimeout(this.timeout)
+    this.interval.stop()
   }
 
   toJSON(){
     let params = {
       msg: this.msg,
       channelId: this.channelId,
-      interval: this.interval,
-      cooldown: this.cooldown,
-      filter: this.filter
+      interval: this.interval.interval,
+      cooldown: this.interval.cooldown,
     }
     return params
   }
@@ -104,11 +103,57 @@ class IntervalMessage {
 
   /**
    * 
-   * @param {string} json 
+   * @param {any} params 
+   * @param {(msg: string) => Promise<boolean>} send 
+   * @returns 
    */
-  static fromObject(params){
-    //let params = JSON.parse(json)
-    return new IntervalMessage(params.msg, params.channelId, params.interval, params.cooldown, params.filter)
+  static fromObject(params, send){
+    return new IntervalMessage(params.msg, params.channelId, params.interval, params.cooldown, send)
+  }
+
+}
+
+class IntervalManager {
+
+  /**
+   * 
+   * @param {(msg: string, channelId: string) => Promise<boolean>} send 
+   */
+  constructor(send) {
+    this.send = send
+    this.intervals = []
+  }
+
+  async setInterval(msg, channel, interval, cooldown=0){
+    let imsg = new IntervalMessage(msg, channel, interval, cooldown, this.send)
+    imsg.start()
+    this.intervals.push(imsg)
+    await this.saveIntervals()
+  }
+
+  async clearInterval(index){
+    let imsg = this.intervals.splice(index, 1)[0]
+    imsg.stop()
+    await this.saveIntervals()
+  }
+
+  async saveIntervals() {
+    await storage.setItem('intervals', this.intervals)
+  }
+
+  async loadIntervals() {
+    let intervals = await storage.getItem('intervals') || []
+    for(let params of intervals) {
+      let imsg = IntervalMessage.fromObject(params, this.send)
+      imsg.start()
+      this.intervals.push(imsg)
+    }
+  }
+
+  async listIntervals(){
+    return {
+      content: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.toString()}`).join('\n') : 'no intervals'
+    }
   }
 
 }
@@ -186,7 +231,7 @@ class NinjaVS extends EventEmitter {
     let outputBlob = net.forward();
     outputBlob = outputBlob.flattenFloat(outputBlob.sizes[1], outputBlob.sizes[2])
 
-    let unwrapped = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640, confidenceThreshold)    
+    let unwrapped = unwrapYOLOv5(outputBlob, Math.max(img.cols, img.rows)/640, confidenceThreshold)
     let res = {boxes:[], confidences: [], classNames: []}
     unwrapped.classNames.forEach((name, i) => {
       if(!exclude.includes(name)){
@@ -377,41 +422,15 @@ class NinjaVS extends EventEmitter {
     }
   }
 
-  async setInterval(cmd, channel, interval, cooldown=0, filter=false){
-    let imsg = new IntervalMessage(cmd, channel, interval, cooldown, filter)
-    imsg.start(this)
-    this.intervals.push(imsg)
-    this.saveIntervals()
-  }
-
-  async clearInterval(index){
-    let imsg = this.intervals.splice(index, 1)[0]
-    imsg.stop()
-    this.saveIntervals()
-  }
-
-  async saveIntervals() {
-    await storage.setItem('intervals', this.intervals)
-  }
-
-  async loadIntervals() {
-    let intervals = await storage.getItem('intervals') || []
-    for(let params of intervals) {
-      let imsg = IntervalMessage.fromObject(params)
-      imsg.start(this)
-      this.intervals.push(imsg)
+  /**
+   * 
+   * @param {*} res 
+   * @param {import('discord.js').AnyChannel | string | undefined} channel 
+   */
+  async send(res, channel=undefined) {
+    if (!channel || typeof channel === 'string') {
+      channel = await this.discord.channels.fetch(channel || this.channelId)
     }
-  }
-
-  async listIntervals(){
-    return {
-      content: (this.intervals.length > 0) ? this.intervals.map((int, i) => `${i}: ${int.toString()}`).join('\n') : 'no intervals'
-    }
-  }
-
-  async send(req, res) {
-    let channel = req ? req.channel
-      : this.bot.discord.channels.cache.get(this.channelId) || (await this.bot.discord.channels.fetch(this.channelId))
     
     await channel.send(res)
   }
@@ -429,7 +448,7 @@ async function main(){
   assertEV('NVS_CAPTURE_FPS')
   assertEV('NVS_CHANNEL_ID')
 
-  let onnxPath = getOption(process.env, 'NVS_ONNX_FILE', "dnn/yolov5s.onnx")
+  let onnxPath = getOption(process.env, 'NVS_ONNX_FILE', "dnn/yolov5s6.onnx")
   if(!fs.existsSync(onnxPath)){
     throw `${onnxPath} onnx model not found`
   }
@@ -449,6 +468,13 @@ async function main(){
   }
 
   let cmd = new CommandHandler(getOption(process.env, 'NVS_CMD_PREFIX', '!'))
+
+  let intervals = new IntervalManager(async (msg, channelId) => {
+    const res = await cmd.execute(msg)
+    if(!res) return false
+    await bot.send(res, channelId)
+    return true
+  })
 
   cmd.register('snap', bot.snapWrapper.bind(bot), {
     description: 'takes a snapshot'
@@ -479,23 +505,22 @@ async function main(){
   .appendArguments(objectCmd)
 
 
-  cmd.register('set-interval', bot.setInterval.bind(bot), {
+  cmd.register('set-interval', intervals.setInterval.bind(intervals), {
     description: 'executes a command periodically'
   })
   .addArgument('cmd', ArgType.String, {required: true, description: 'command to execute'})
   .addArgument('channel', ArgType.String, {default: getOption(process.env, 'NVS_CHANNEL_ID', ''), description: 'channel id'})
   .addArgument('interval', ArgType.Time, {required: true, description: 'delay between runs'})
   .addArgument('cooldown', ArgType.Time, {default: 10, description: 'time to wait after a message was sent'})
-  .addArgument('filter', ArgType.Bool, {default: false, description: 'filter messages without attachments'})
   
 
-  cmd.register('clear-interval', bot.clearInterval.bind(bot), {
+  cmd.register('clear-interval', intervals.clearInterval.bind(intervals), {
     description: 'clear interval'
   })
   .addArgument('i', ArgType.Number, {default: 0})
 
 
-  cmd.register('intervals', bot.listIntervals.bind(bot), {
+  cmd.register('intervals', intervals.listIntervals.bind(intervals), {
     description: 'list intervals'
   })
 
@@ -513,8 +538,6 @@ async function main(){
     description: 'prints more information of a command'
   })
   .addArgument('name', ArgType.String, {required: true})
-
-
 
 
   let pages = new PageCollection('home', [new MessageButton({
@@ -540,22 +563,25 @@ async function main(){
     if(!interaction.isButton()) return
     interaction.reply('Processing...')
     let res = await pages.execute(interaction.customId)
-    return bot.send(interaction, res)
+    return bot.send(res, interaction.channel)
   });
 
-  bot.on('messageCreate', (msg) => {
-    (function (msg){ 
-      cmd.execute(msg.content).then((res) => {
-        if(!res) return
-        return bot.send(msg, res)
-      }).catch((err) => {
-        console.log(err.toString(), err.stack)
-        return bot.send(msg, err.toString())
-      })
-    })(msg)
-  })
+  /**
+   * 
+   * @param {Message} msg 
+   */
+  function messageCreateHandler(msg) {
+    cmd.execute(msg.content).then((res) => {
+      if(!res) return
+      return bot.send(res, msg.channel)
+    }).catch((err) => {
+      console.log(err.toString(), err.stack)
+      return bot.send(err.toString(), msg.channel)
+    })
+  }
+  bot.on('messageCreate', messageCreateHandler)
 
-  await bot.loadIntervals()
+  await intervals.loadIntervals()
 }
 
 if (require.main === module) {
@@ -569,4 +595,5 @@ if (require.main === module) {
 
 module.exports = { 
   NinjaVS,
+  CooldownInterval
 }
